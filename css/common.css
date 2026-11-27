@@ -1,0 +1,42 @@
+:root {
+  --bg: #0b1016;
+  --panel: #121a23;
+  --panel2: #18222d;
+  --line: #263444;
+  --text: #e6edf3;
+  --muted: #8b9bab;
+  --accent: #2ec5ff;
+  --ok: #3ddc84;
+  --warn: #ffb547;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "D2Coding", monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+a { color: var(--accent); }
+h1 { font-size: 26px; margin: 8px 0 8px; }
+h2 { font-size: 18px; margin: 0 0 12px; }
+h3 { font-size: 15px; margin: 18px 0 10px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.mono { font-family: var(--mono); }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+
+header.top { display: flex; align-items: center; gap: 14px; padding: 12px 20px;
+  border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 10; }
+.brand { font-weight: 700; text-decoration: none; color: var(--text); }
+.crumb { color: var(--muted); font-size: 14px; }
+
+.wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; display: flex; flex-direction: column; gap: 16px; }
+.intro p { margin: 4px 0 10px; color: var(--muted); }
+.steps { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+
+button { font: inherit; font-size: 14px; padding: 9px 16px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel2); color: var(--text); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #001018; font-weight: 700; }
+button.ghost { background: transparent; }
+button:disabled { opacity: .5; cursor: wait; }
+select { font: inherit; font-size: 13px; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; max-width: 100%; }

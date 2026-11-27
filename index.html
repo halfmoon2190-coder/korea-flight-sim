@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Korea Flight Sim</title>
+<link rel="stylesheet" href="css/common.css">
+<style>
+  .hero { padding: 28px 0 8px; }
+  .hero p { color: var(--muted); max-width: 640px; line-height: 1.6; }
+  .menu { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .menu a, .menu div { display: block; text-decoration: none; color: var(--text); }
+  .menu .card h2 { margin-bottom: 6px; }
+  .menu .card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+  .menu a.card:hover { border-color: var(--accent); }
+  .menu .off { opacity: .45; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px; margin-left: 6px;
+    border: 1px solid var(--line); color: var(--muted); vertical-align: middle; }
+  .badge.now { border-color: var(--accent); color: var(--accent); }
+  ol.road { margin: 0; padding-left: 20px; line-height: 1.9; font-size: 14px; }
+  ol.road li.done { color: var(--ok); }
+  ol.road li.now { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<header class="top"><span class="brand">✈ Korea Flight Sim</span><span class="crumb">인천 · 김해 · 제주</span></header>
+<main class="wrap">
+  <section class="hero">
+    <h1>대한민국 여객기 운항 시뮬레이터</h1>
+    <p>인천(RKSI) · 김해(RKPK) · 제주(RKPC) 세 공항을 오가는 협동체 여객기 조종 시뮬레이터입니다.
+       브라우저에서 바로 실행되며 키보드 · 마우스 · 조이스틱을 지원합니다.</p>
+  </section>
+
+  <section class="menu">
+    <a class="card" href="check.html">
+      <h2>환경 점검 <span class="badge now">지금 단계</span></h2>
+      <p>PC 그래픽 성능과 조이스틱(방향 · 버튼) 인식을 확인하고 결과를 복사합니다.</p>
+    </a>
+    <div class="card off">
+      <h2>비행 시작 <span class="badge">준비 중</span></h2>
+      <p>공항 · 활주로 선택 후 이륙부터 착륙까지 비행합니다.</p>
+    </div>
+    <div class="card off">
+      <h2>조종 설정 <span class="badge">준비 중</span></h2>
+      <p>조이스틱 버튼 · 키보드 배정과 감도를 설정합니다.</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>개발 로드맵</h2>
+    <ol class="road">
+      <li class="now">0단계 · 환경 점검 (PC 성능, 조이스틱 인식)</li>
+      <li>1단계 · 기본 비행 (비행 물리, 이착륙, 조이스틱 조종)</li>
+      <li>2단계 · 한반도 지형 + 인천 · 김해 · 제주 공항</li>
+      <li>3단계 · 조종석 계기(PFD/ND), 오토파일럿, ILS 착륙</li>
+      <li>4단계 · 비행 계획, 연료 · 무게, 체크리스트, 착륙 평가</li>
+      <li>5단계 · 날씨, 야간, 관제(ATC), 고장 훈련</li>
+    </ol>
+  </section>
+</main>
+</body>
+</html>
