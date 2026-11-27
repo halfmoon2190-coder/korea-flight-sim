@@ -8,12 +8,16 @@ import { createKoreaWorld } from './world/korea.js';
 import { AIRPORTS } from './geo/airports.js';
 import { MAG_VAR_W, toLatLon, trueToMag } from './geo/proj.js';
 import { Minimap } from './ui/minimap.js';
+import { Autopilot } from './sim/autopilot.js';
+import { FlightPlan } from './nav/fms.js';
+import { RouteGuide } from './view/routeguide.js';
+import { ND_RANGES } from './ui/nd.js';
 import { buildAircraftModel } from './view/model.js';
 import { CameraRig } from './view/camera.js';
 import { Input, ACTIONS, saveSettings, defaultSettings } from './input.js';
 import { Instruments } from './ui/instruments.js';
 import { Audio } from './audio.js';
-import { SCENARIOS, WEIGHTS, ROUTE_STARTS, setupRoute } from './scenarios.js';
+import { SCENARIOS, WEIGHTS, ROUTE_STARTS, setupRoute, findRunwayEnd } from './scenarios.js';
 import { evaluateLanding } from './ui/landing.js';
 
 const $ = (id) => document.getElementById(id);
@@ -47,6 +51,10 @@ const rig = new CameraRig(camera, renderer.domElement);
 rig.towerPos.copy(world.towerFor(ac.pos));
 const input = new Input();
 const minimap = new Minimap($('minimap'));
+const ap = new Autopilot(ac);
+const rings = new RouteGuide(scene);
+rings.enabled = store.get('guide', false);
+let ndRange = store.get('ndRange', 40);
 const inst = new Instruments($('hud'));
 const audio = new Audio();
 
@@ -149,6 +157,8 @@ function buildMenu() {
   $('optQuality').value = quality;
   $('optSound').checked = store.get('sound', true);
   $('optCallout').checked = store.get('callout', true);
+  $('optGuide').checked = store.get('guide', false);
+  $('optFd').checked = store.get('fd', true);
   updateSpeedsInfo();
 }
 function applyWeight() {
@@ -170,6 +180,8 @@ $('optQuality').onchange = (e) => {
 };
 $('optSound').onchange = (e) => { store.set('sound', e.target.checked); audio.enabled = e.target.checked; };
 $('optCallout').onchange = (e) => { store.set('callout', e.target.checked); audio.callouts = e.target.checked; };
+$('optGuide').onchange = (e) => { store.set('guide', e.target.checked); rings.enabled = e.target.checked; };
+$('optFd').onchange = (e) => { store.set('fd', e.target.checked); ap.fd = e.target.checked; };
 $('startBtn').onclick = () => startFlight();
 $('resumeBtn').onclick = () => closeModal('menu');
 
@@ -190,6 +202,7 @@ async function startFlight() {
   ac.updateDerived();
   timeScale = 1;
   speeds = ac.speeds();
+  setupAutoflight();
   input.pitch = input.roll = 0;
   running = true; paused = false;
   $('pauseLabel').hidden = true;
@@ -286,6 +299,7 @@ function handleAction(a) {
     case 'map': minimap.mode = (minimap.mode + 1) % 3; toast(['지도 끄기', '지도: 전체', '지도: 주변 60NM'][minimap.mode]); return;
   }
   if (!running || modalOpen) return;
+  if (fcuAction(a)) return;
   switch (a) {
     case 'pause': paused = !paused; $('pauseLabel').hidden = !paused; audio.mute(paused); break;
     case 'view': toast('시점: ' + rig.next()); break;
@@ -350,6 +364,11 @@ function computeGuide() {
 
 /* ───────── 이벤트 · 경고 ───────── */
 function processEvents() {
+  while (ap.events.length) {
+    const e = ap.events.shift();
+    if (e === 'ap_off') { apOffAlert(); }
+    if (e === 'retard') audio.say('retard', 1.1);
+  }
   while (ac.events.length) {
     const e = ac.events.shift();
     if (e.type === 'touchdown') pendingResult = { td: e.data, at: performance.now() + 2500 };
@@ -405,7 +424,7 @@ function updateWarnings() {
 
 /* ───────── 메인 루프 ───────── */
 const DT = 1 / 120;
-let acc = 0, last = performance.now(), fpsAcc = 0, fpsN = 0, warnT = 0, spT = 0;
+let acc = 0, last = performance.now(), fpsAcc = 0, fpsN = 0, warnT = 0, spT = 0, fcuT = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
@@ -416,7 +435,12 @@ function frame(now) {
     acc += dt * timeScale;
     let n = 0;
     const maxN = 24 * timeScale;
-    while (acc >= DT && n < maxN) { ac.step(DT); acc -= DT; n++; }
+    const userTakeover = Math.abs(input.pitch) > 0.35 || Math.abs(input.roll) > 0.35;
+    while (acc >= DT && n < maxN) {
+      if (ap.ap && userTakeover) ap.disconnect('조종간 입력 — AP 해제');
+      ap.update(DT);
+      ac.step(DT); acc -= DT; n++;
+    }
     if (n >= maxN) acc = 0;
     ac.hdgOffset = hdgOffsetAt();
   }
@@ -432,12 +456,14 @@ function frame(now) {
   renderer.render(scene, camera);
 
   const guide = computeGuide();
-  inst.draw(ac, { view: rig.view, guide, speeds }, frozen ? 0 : dt);
+  inst.draw(ac, { view: rig.view, guide, speeds, ap, nd: running ? { world, plan: ap.plan, ap, range: ndRange, airports: ndAirports() } : null }, frozen ? 0 : dt);
+  rings.update(ac, ap.lastGuide ? ap.lastGuide.s : 0, running && !ac.crashed);
+  fcuT += dt; if (fcuT > 0.1) { fcuT = 0; updateFcu(); }
   audio.update(ac, rig.view, frozen);
 
   warnT += dt; if (warnT > 0.25) { warnT = 0; updateWarnings(); updateNav(); }
   minimap.draw(ac, world, mode === 'route' && running ? route : null);
-  spT += dt; if (spT > 2) { spT = 0; if (running) { const v = speeds.vapp; speeds = ac.speeds(); speeds.vapp = v; } }
+  spT += dt; if (spT > 2) { spT = 0; if (running) { const v = speeds.vapp; speeds = ac.speeds(); speeds.vapp = v; ap.speeds = speeds; } }
   if (!$('settings').hidden) {
     drawStickTest();
     input.padState.buttons.forEach((b, i) => { const r = $('btnRow' + i); if (r) r.classList.toggle('on', !!b); });
@@ -455,11 +481,13 @@ requestAnimationFrame(frame);
 
 // 디버그/테스트용
 window.__kfs = {
-  ac, rig, input, startFlight, handleAction, route, minimap, renderer,
+  ac, rig, input, startFlight, handleAction, route, minimap, renderer, ap, rings,
   get world() { return world; }, get korea() { return korea; },
   setScenario: (id) => { scenario = SCENARIOS.find(s => s.id === id); mode = 'practice'; },
   setRoute: (cfg) => { Object.assign(route, cfg); mode = 'route'; },
   get timeScale() { return timeScale; },
+  /** 테스트용 빨리 감기 (초) */
+  ff(sec) { const n = Math.round(sec / DT); for (let i = 0; i < n && !ac.crashed; i++) { ap.update(DT); ac.step(DT); if (i % 120 === 0) ac.hdgOffset = hdgOffsetAt(); } processEvents(); },
 };
 
 /* ───────── 2단계 보조 기능 ───────── */
@@ -496,10 +524,123 @@ function updateNav() {
   const ete = nv.distNm / gs * 60;
   const tod = Math.max(0, (ac.altFt - nv.ap.elevFt - 3000) / 1000 * 3 + 10);   // 3NM/1000ft 강하 + 10NM
   box.hidden = false;
-  box.style.top = '10px';
-  box.style.left = (minimap.mode && !$('minimap').hidden ? $('minimap').getBoundingClientRect().right + 8 : 10) + 'px';
+  box.style.top = '52px'; box.style.right = '10px'; box.style.left = 'auto';
   box.innerHTML = `목적지 <b>${nv.ap.short} ${nv.ap.icao}</b> · RWY ${route.destRwy}<br>` +
     `거리 <b>${nv.distNm.toFixed(0)} NM</b> · 방위 <b>${String(brg).padStart(3, '0')}°</b> (현재 ${String(Math.round(ac.dispHeading)).padStart(3, '0')}°)<br>` +
     `예상 ${ete < 600 ? Math.round(ete) + '분' : '--'} · 강하 시작 약 ${Math.round(tod)} NM 전` +
     (nv.distNm < tod && ac.altFt > nv.ap.elevFt + 4000 ? ' <b>← 강하하세요</b>' : '');
+}
+
+/* ───────── 3단계: 자동비행 ───────── */
+function setupAutoflight() {
+  ap.reset();
+  ap.fd = store.get('fd', true);
+  ap.speeds = speeds;
+  let dst, depEnd = null, destName = '', cruiseAlt;
+  if (mode === 'route') {
+    dst = findRunwayEnd(korea, route.dest, route.destRwy);
+    if (route.start === 'takeoff') depEnd = findRunwayEnd(korea, route.dep, route.depRwy).end;
+    destName = route.dest;
+    if (route.start === 'cruise') cruiseAlt = ac.pos.y - 2.9;
+  } else {
+    dst = { rwy, end: rwy.ends[0] };
+    if (scenario.id === 'takeoff') depEnd = rwy.ends[0];
+    cruiseAlt = 3000 * FT;
+    destName = 'TRNG';
+  }
+  const plan = new FlightPlan(world, { start: { x: ac.pos.x, z: ac.pos.z, alt: ac.pos.y - 2.9 }, depEnd, end: dst.end, destName, cruiseAlt });
+  ap.plan = plan; ap.app = dst;
+  rings.setPlan(plan);
+  ap.fcu.hdg = Math.round(ac.dispHeading);
+  ap.fcu.spd = Math.round(Math.max(ac.ias, 160));
+  ap.fcu.alt = Math.round((ac.wow ? plan.cruiseAlt / FT : ac.altFt) / 100) * 100;
+  const start = mode === 'route' ? route.start : scenario.id;
+  if (start === 'cruise') {
+    ac.ctl.lever = AC.detents.CL;
+    ap.athr = true; ap.n1Trim = ac.n1;
+    ap.ap = true; ap.setLat('NAV'); ap.setVert('ALT');
+    ap.fcu.alt = Math.round(ac.altFt / 100) * 100;
+    toast('AP1 · A/THR 켜진 상태로 순항 중 — ND의 T/D에서 강하하세요', 4000);
+  }
+}
+
+function ndAirports() {
+  if (world.kind === 'korea') return korea.airports.map(a => ({ x: a.geo.pos.x, z: a.geo.pos.z, name: a.icao }));
+  return [{ x: 0, z: 0, name: 'TRNG' }];
+}
+
+let apOffTimer = null;
+function apOffAlert() {
+  let el = document.getElementById('apOff');
+  if (!el) { el = document.createElement('div'); el.id = 'apOff'; el.textContent = 'AP OFF'; document.body.appendChild(el); }
+  el.hidden = false;
+  clearTimeout(apOffTimer); apOffTimer = setTimeout(() => { el.hidden = true; }, 2500);
+  audio.beep(880, 0.15); setTimeout(() => audio.beep(660, 0.15), 180); setTimeout(() => audio.beep(880, 0.15), 360);
+}
+
+/** FCU 조작 (키보드 · 버튼 공통). 처리했으면 true */
+function fcuAction(a, shift = false) {
+  const big = shift;
+  switch (a) {
+    case 'ap': ap.toggleAP(); break;
+    case 'athr':
+      ap.toggleATHR();
+      if (ap.athr && ac.ctl.lever > AC.detents.CL + 0.01) toast('A/THR은 추력 레버가 CL(2) 이하일 때 작동합니다');
+      break;
+    case 'loc': ap.armLoc(); break;
+    case 'appr': ap.armAppr(); break;
+    case 'fd': ap.fd = !ap.fd; store.set('fd', ap.fd); toast(ap.fd ? 'FD 켜짐' : 'FD 꺼짐'); break;
+    case 'guide': rings.enabled = !rings.enabled; store.set('guide', rings.enabled); toast(rings.enabled ? '3D 경로 링 켜짐' : '3D 경로 링 꺼짐'); break;
+    case 'ndDn': case 'ndUp': {
+      const i = ND_RANGES.indexOf(ndRange);
+      ndRange = ND_RANGES[Math.max(0, Math.min(ND_RANGES.length - 1, (i < 0 ? 2 : i) + (a === 'ndUp' ? 1 : -1)))];
+      store.set('ndRange', ndRange); break;
+    }
+    case 'spd-': ap.setSpd(big ? -10 : -1); break;
+    case 'spd+': ap.setSpd(big ? 10 : 1); break;
+    case 'spdPull': ap.pullSpd(); break;
+    case 'spdPush': ap.pushSpd(); break;
+    case 'hdg-': ap.setHdg(big ? -10 : -1); break;
+    case 'hdg+': ap.setHdg(big ? 10 : 1); break;
+    case 'hdgPull': ap.pullHdg(); break;
+    case 'hdgPush': ap.pushHdg(); break;
+    case 'alt-': ap.setAlt(big ? -1000 : -100); break;
+    case 'alt+': ap.setAlt(big ? 1000 : 100); break;
+    case 'altPull': ap.pullAlt(); break;
+    case 'altPush': ap.pushAlt(); break;
+    case 'vs-': ap.setVs(-100); break;
+    case 'vs+': ap.setVs(100); break;
+    case 'vsPull': ap.pullVs(); break;
+    case 'vsPush': ap.pushVs(); break;
+    default: return false;
+  }
+  updateFcu();
+  return true;
+}
+document.querySelectorAll('#fcu [data-f]').forEach(b => b.addEventListener('click', (e) => { if (running && !modalOpen) fcuAction(b.dataset.f, e.shiftKey); b.blur(); }));
+document.querySelectorAll('#fcu .fcu-sec').forEach(sec => {
+  const k = sec.dataset.k;
+  sec.querySelector('.win').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (!running || modalOpen) return;
+    fcuAction(k + (e.deltaY < 0 ? '+' : '-'), e.shiftKey);
+  }, { passive: false });
+});
+
+function updateFcu() {
+  const el = $('fcu');
+  el.hidden = !running || !inst.visible;
+  if (el.hidden) return;
+  const f = ap.fcu;
+  $('fSpd').textContent = f.spdMan ? '---●' : String(f.spd);
+  const latMan = ['NAV', 'LOC*', 'LOC', 'LAND', 'ROLL OUT'].includes(ap.lat);
+  $('fHdg').textContent = latMan ? '---●' : String(f.hdg).padStart(3, '0');
+  $('fAlt').textContent = String(f.alt).padStart(5, '0') + (['CLB', 'DES'].includes(ap.vert) ? '●' : '');
+  $('fVs').textContent = ap.vert === 'V/S' ? (f.vs >= 0 ? '+' : '−') + String(Math.abs(f.vs)).padStart(4, '0') : '-----';
+  const set = (id, lit, arm) => { const b = $(id); b.classList.toggle('lit', !!lit); b.classList.toggle('arm', !lit && !!arm); };
+  set('bAp', ap.ap); set('bAthr', ap.athr, ap.athrArmed);
+  set('bLoc', ['LOC*', 'LOC', 'LAND'].includes(ap.lat) && !ap.armed.gs && !['G/S', 'G/S*', 'LAND'].includes(ap.vert), ap.armed.loc && !ap.armed.gs);
+  set('bAppr', ['G/S', 'G/S*', 'LAND', 'FLARE'].includes(ap.vert), ap.armed.gs);
+  set('bFd', ap.fd); set('bGuide', rings.enabled);
+  $('fcuMsg').textContent = ap.msg || '';
 }

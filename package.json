@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tools/simtest.js"
+    "test": "node tools/simtest.js && node tools/aptest.js --route"
   },
   "devDependencies": {
     "pngjs": "^7.0.0"

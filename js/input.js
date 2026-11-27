@@ -15,6 +15,9 @@ export const ACTIONS = {
   rudderR:   { label: '러더 오른쪽 (누르는 동안)', hold: true },
   reverse:   { label: '역추력 켜기/끄기 (지상)' },
   pause:     { label: '일시정지' },
+  ap:        { label: '오토파일럿(AP1) 켜기/끄기' },
+  athr:      { label: '오토스로틀(A/THR) 켜기/끄기' },
+  appr:      { label: 'APPR (ILS 자동접근) 대기' },
   none:      { label: '(사용 안 함)' },
 };
 
@@ -77,6 +80,12 @@ export class Input {
       Equal: 'timeUp', NumpadAdd: 'timeUp', Minus: 'timeDown', NumpadSubtract: 'timeDown',
     };
     if (code === 'KeyB' && shift) return this.emit('action', 'parking');
+    if (code === 'KeyA') return this.emit('action', shift ? 'athr' : 'ap');
+    if (code === 'KeyL') return this.emit('action', shift ? 'appr' : 'loc');
+    if (code === 'KeyD') return this.emit('action', 'fd');
+    if (code === 'KeyU') return this.emit('action', 'guide');
+    if (code === 'Comma') return this.emit('action', 'ndDn');
+    if (code === 'Period') return this.emit('action', 'ndUp');
     if (code === 'Slash') return this.emit('action', shift ? 'spoilerArm' : 'spoiler');
     if (m[code]) this.emit('action', m[code]);
   }

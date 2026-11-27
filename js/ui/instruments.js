@@ -1,6 +1,7 @@
 // 2D 계기: PFD(주비행표시) + 엔진·시스템 패널 + 추력레버/조종간 표시
 import { AC, n1ToThrustFrac } from '../sim/a320.js';
 import { DEG, KT, FT, NM, wrap180, wrap360, clamp } from '../sim/atmo.js';
+import { drawND } from './nd.js';
 
 const C = {
   sky: '#1f73c9', gnd: '#8a5a2b', white: '#ffffff', yellow: '#ffd23f', green: '#3ce36b', amber: '#ffb000',
@@ -30,6 +31,7 @@ export class Instruments {
     g.clearRect(0, 0, this.w, this.h);
     if (!this.visible) return;
     const { view, guide, speeds } = ctx2;
+    this.ap = ctx2.ap || null;
 
     // 속도 추세 (10초 예측)
     if (this.lastIas !== null && dt > 0) {
@@ -38,9 +40,11 @@ export class Instruments {
     }
     this.lastIas = ac.ias;
 
-    const S = Math.round(clamp(Math.min(this.h * 0.40, this.w * 0.30), 210, 360));
+    const withNd = !!ctx2.nd;
+    const S = Math.round(clamp(Math.min(this.h * 0.40, (this.w - 40) / (withNd ? 3.1 : 2.3)), 200, 350));
     const pad = 10;
-    const panelW = S * 2.25 + pad * 3, panelH = S + pad * 2;
+    const sysW = withNd ? S : S * 1.25;
+    const panelW = S * (withNd ? 2 : 1) + sysW + pad * (withNd ? 4 : 3), panelH = S + pad * 2;
     const x0 = view === 'cockpit' ? Math.round((this.w - panelW) / 2) : pad;
     const y0 = this.h - panelH - pad;
 
@@ -49,7 +53,10 @@ export class Instruments {
     roundRect(g, x0, y0, panelW, panelH, 12); g.fill();
 
     this.drawPFD(g, x0 + pad, y0 + pad, S, ac, guide, speeds);
-    this.drawSystems(g, x0 + pad * 2 + S, y0 + pad, S * 1.25, S, ac, speeds);
+    let sx = x0 + pad * 2 + S;
+    if (withNd) { drawND(g, sx, y0 + pad, S, ac, ctx2.nd); sx += S + pad; }
+    this.drawSystems(g, sx, y0 + pad, sysW, S, ac, speeds);
+    this.panelRect = { x: x0, y: y0, w: panelW, h: panelH };
   }
 
   drawCockpitFrame(g, top) {
@@ -134,6 +141,15 @@ export class Instruments {
     g.beginPath(); g.moveTo(cx + ws * 1.6, cy); g.lineTo(cx + ws * 0.6, cy); g.lineTo(cx + ws * 0.6, cy + 8); g.stroke();
     g.fillStyle = C.yellow; g.fillRect(cx - 3, cy - 3, 6, 6);
 
+    // 비행 지시기 (FD) 막대
+    const ap = this.ap;
+    if (ap && ap.fd && ap.cmd.active && !ac.wow) {
+      const rx = cx + clamp((ap.cmd.phi - ac.bank) * 3.2, -attW * 0.42, attW * 0.42);
+      const py = cy - clamp((ap.cmd.gamma / DEG - ac.fpa) * ppd * 1.6, -attH * 0.42, attH * 0.42);
+      g.strokeStyle = C.green; g.lineWidth = 3;
+      g.beginPath(); g.moveTo(rx, cy - attH * 0.28); g.lineTo(rx, cy + attH * 0.28); g.stroke();
+      g.beginPath(); g.moveTo(cx - attW * 0.3, py); g.lineTo(cx + attW * 0.3, py); g.stroke();
+    }
     // 조종간 위치 (지상) / 착륙 유도 편차
     if (ac.wow) {
       g.strokeStyle = C.white; g.lineWidth = 1;
@@ -243,6 +259,16 @@ export class Instruments {
       g.beginPath(); g.moveTo(x + w - 19, ty + s * 6); g.lineTo(x + w - 14, ty); g.lineTo(x + w - 9, ty + s * 6); g.stroke();
     }
     g.restore();
+    // 목표 속도 (관리=분홍, 선택=청록)
+    const apS = this.ap;
+    if (apS && apS.spdTarget && (apS.ap || apS.athr || apS.fd) && !ac.wow) {
+      const tv = apS.spdTarget, ty = y + h / 2 - (tv - ac.ias) * (h / 80);
+      const col = apS.fcu.spdMan ? C.magenta : C.cyan;
+      g.fillStyle = col;
+      const yy = clamp(ty, y + 6, y + h - 6);
+      g.beginPath(); g.moveTo(x + w - 1, yy); g.lineTo(x + w + 9, yy - 6); g.lineTo(x + w + 9, yy + 6); g.closePath(); g.fill();
+      if (ty < y || ty > y + h) { g.font = `${Math.round(w * 0.26)}px monospace`; g.textAlign = 'center'; g.fillText(Math.round(tv), x + w / 2, ty < y ? y + 10 : y + h - 8); }
+    }
     // 현재 속도 기준선
     g.strokeStyle = C.yellow; g.lineWidth = 3;
     g.beginPath(); g.moveTo(x, y + h / 2); g.lineTo(x + w + 6, y + h / 2); g.stroke();
@@ -271,6 +297,14 @@ export class Instruments {
     const yg = cy - (groundAlt - alt) * ppf;
     if (yg < y + h) { g.fillStyle = 'rgba(255,59,48,0.55)'; g.fillRect(x, yg, w, y + h - yg); }
     g.restore();
+    // 선택 고도 (청록)
+    if (this.ap && !ac.wow) {
+      const fa = this.ap.fcu.alt, ty = y + h / 2 - (fa - ac.altFt) * (h / 1000);
+      g.font = `bold ${Math.round(w * 0.27)}px monospace`; g.textAlign = 'center'; g.fillStyle = C.cyan;
+      if (ty < y + 8) g.fillText(fa, x + w / 2, y - 9);
+      else if (ty > y + h - 8) g.fillText(fa, x + w / 2, y + h + 22);
+      else { g.fillRect(x, ty - 7, 6, 14); }
+    }
     // 현재 고도 상자
     g.fillStyle = '#000'; g.strokeStyle = C.yellow; g.lineWidth = 2;
     const bh = h * 0.1;
@@ -313,6 +347,13 @@ export class Instruments {
       g.beginPath(); g.moveTo(xx, y); g.lineTo(xx, y + (d % 10 === 0 ? 9 : 5)); g.stroke();
       if (d % 10 === 0) g.fillText(String(wrap360(d) / 10 | 0).padStart(2, '0'), xx, y + h * 0.65);
     }
+    // 선택 방위 (청록 삼각형)
+    if (this.ap) {
+      const rel = wrap180(this.ap.fcu.hdg - hd);
+      const bx = cx + clamp(rel, -24, 24) * ppd;
+      g.fillStyle = C.cyan;
+      g.beginPath(); g.moveTo(bx, y + 10); g.lineTo(bx - 6, y + 1); g.lineTo(bx + 6, y + 1); g.closePath(); g.fill();
+    }
     // 항적(초록 다이아몬드)
     const tx = cx + clamp(wrap180((ac.dispTrack ?? ac.track) - hd), -24, 24) * ppd;
     g.fillStyle = C.green; diamond(g, tx, y + 5, 4, 5);
@@ -323,25 +364,35 @@ export class Instruments {
 
   drawFMA(g, x, y, S, h, ac) {
     g.fillStyle = '#000'; g.fillRect(x, y, S, h);
+    const cols = [0, 0.22, 0.44, 0.64, 0.78, 1].map(f => x + S * f);
     g.strokeStyle = '#555'; g.lineWidth = 1;
-    for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(x + S * i / 4, y + 3); g.lineTo(x + S * i / 4, y + h - 3); g.stroke(); }
-    g.font = `${Math.round(h * 0.36)}px monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    const L = ac.ctl.lever;
-    let thr = 'MAN THR';
-    if (ac.ctl.rev) thr = 'REV';
-    else if (L > 0.99) thr = 'MAN TOGA';
-    else if (Math.abs(L - AC.detents.MCT) < 0.01) thr = ac.wow ? 'MAN FLX' : 'MAN MCT';
-    else if (Math.abs(L - AC.detents.CL) < 0.01) thr = 'THR CLB';
-    else if (L < 0.01) thr = 'THR IDLE';
-    g.fillStyle = thr.startsWith('MAN') ? C.white : C.green;
-    g.fillText(thr, x + S / 8, y + h / 2);
-    const law = { GROUND: 'GND', NORMAL: 'NORMAL', FLARE: 'FLARE' }[ac.law];
-    g.fillStyle = ac.law === 'FLARE' ? C.green : C.white;
-    g.fillText(law + ' LAW', x + S * 3 / 8, y + h / 2);
-    g.fillStyle = C.cyan;
-    g.fillText(`FLAP ${ac.flapLabel}`, x + S * 5 / 8, y + h / 2);
-    g.fillStyle = ac.aProtActive ? C.amber : C.white;
-    g.fillText(ac.aProtActive ? 'α PROT' : `GS ${Math.round(ac.gs / KT)}`, x + S * 7 / 8, y + h / 2);
+    for (let i = 1; i < 5; i++) { g.beginPath(); g.moveTo(cols[i], y + 2); g.lineTo(cols[i], y + h - 2); g.stroke(); }
+    const fs = Math.round(h * 0.34);
+    g.font = `${fs}px monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const r1 = y + h * 0.3, r2 = y + h * 0.74;
+    const mid = (i) => (cols[i] + cols[i + 1]) / 2;
+    const ap = this.ap;
+    if (!ap) {
+      g.fillStyle = C.white; g.fillText(ac.law + ' LAW', x + S / 2, y + h / 2);
+      return;
+    }
+    const f = ap.fma();
+    const fit = (t, i) => { const wmax = cols[i + 1] - cols[i] - 4; const mw = g.measureText(t).width; if (mw > wmax) { g.save(); g.font = `${Math.round(fs * wmax / mw)}px monospace`; } return mw > wmax; };
+    const put = (t, i, row, col) => { if (!t) return; const sc = fit(t, i); g.fillStyle = col; g.fillText(t, mid(i), row); if (sc) g.restore(); };
+    put(f.thr, 0, r1, f.thr.startsWith('MAN') || f.thr === 'THR LVR' ? C.white : f.thr === 'A.FLOOR' ? C.amber : C.green);
+    if (f.lvrClb && Math.floor(performance.now() / 500) % 2 === 0) put('LVR CLB', 0, r2, C.white);
+    else put(f.thrArmed, 0, r2, C.cyan);
+    if (['LAND', 'FLARE', 'ROLL OUT'].includes(ap.vert)) {
+      g.fillStyle = C.green; g.fillText(ap.vert, (cols[1] + cols[3]) / 2, r1);
+    } else {
+      put(f.vert, 1, r1, C.green); put(f.lat, 2, r1, C.green);
+    }
+    put(f.vertArmed, 1, r2, C.cyan); put(f.latArmed, 2, r2, C.cyan);
+    put(ac.law === 'NORMAL' ? '' : ac.law === 'FLARE' ? '' : '', 3, r1, C.white);
+    put(ap.armed.gs || ap.vert === 'G/S' || ap.vert === 'LAND' ? 'CAT 3' : '', 3, r1, C.white);
+    put(f.status[0] || '', 4, r1, C.white);
+    g.font = `${Math.round(fs * 0.85)}px monospace`;
+    g.fillStyle = C.white; g.fillText([f.status[1], f.status[2]].filter(Boolean).join(' '), mid(4), r2);
   }
 
   /* ───────── 엔진 · 시스템 ───────── */
@@ -351,20 +402,21 @@ export class Instruments {
     const fs = Math.round(H * 0.052);
     g.textBaseline = 'middle';
     // N1 게이지 2개
-    const gr = H * 0.17;
+    const gr = Math.min(H * 0.15, W * 0.15);
     for (let i = 0; i < 2; i++) {
-      const gx = x + W * (0.2 + i * 0.32), gy = y + H * 0.23;
+      const gx = x + W * (0.19 + i * 0.36), gy = y + H * 0.22;
       this.drawN1(g, gx, gy, gr, ac, fs);
     }
     // 추력 레버 표시
     this.drawLever(g, x + W * 0.86, y + H * 0.06, W * 0.1, H * 0.48, ac, fs);
 
     // 연료 흐름
-    g.font = `${fs}px monospace`; g.textAlign = 'center'; g.fillStyle = C.white;
-    g.fillText('FF kg/h', x + W * 0.36, y + H * 0.47);
-    g.fillStyle = C.green;
+    g.font = `${Math.round(fs * 0.9)}px monospace`; g.textAlign = 'center';
     const ffph = Math.round(ac.fuelFlow / 2 * 3600 / 10) * 10;
-    g.fillText(ffph, x + W * 0.2, y + H * 0.47); g.fillText(ffph, x + W * 0.52, y + H * 0.47);
+    for (const fx of [0.19, 0.55]) {
+      g.fillStyle = C.white; g.fillText('FF', x + W * fx - fs * 1.6, y + H * 0.47);
+      g.fillStyle = C.green; g.fillText(ffph, x + W * fx + fs * 0.6, y + H * 0.47);
+    }
 
     // 구분선
     g.strokeStyle = '#2a3440'; g.beginPath(); g.moveTo(x + 6, y + H * 0.55); g.lineTo(x + W - 6, y + H * 0.55); g.stroke();

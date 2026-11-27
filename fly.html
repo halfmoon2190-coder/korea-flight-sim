@@ -15,12 +15,35 @@
   <button data-act="view" title="시점 전환 (V)">👁 시점</button>
   <button data-act="pause" title="일시정지 (P)">⏸</button>
   <button data-act="help" title="조작법 (H)">?</button>
+  <span id="timeBox" hidden></span>
   <span id="fps"></span>
 </div>
 <div id="warnings"></div>
 <canvas id="minimap" hidden></canvas>
+<!-- FCU: 자동비행 조작 패널 (마우스 클릭 · 휠) -->
+<div id="fcu" hidden>
+  <div class="fcu-sec" data-k="spd"><div class="lbl">SPD</div><div class="win" id="fSpd" title="휠: ±1 (Shift ±10)">---</div>
+    <div class="kn"><button data-f="spd-">−</button><button data-f="spd+">+</button></div>
+    <div class="kn"><button data-f="spdPull" title="선택 속도">당김</button><button data-f="spdPush" title="관리 속도">누름</button></div></div>
+  <div class="fcu-sec" data-k="hdg"><div class="lbl">HDG</div><div class="win" id="fHdg" title="휠: ±1 (Shift ±10)">---</div>
+    <div class="kn"><button data-f="hdg-">−</button><button data-f="hdg+">+</button></div>
+    <div class="kn"><button data-f="hdgPull" title="HDG 모드">당김</button><button data-f="hdgPush" title="NAV (경로)">누름</button></div></div>
+  <div class="fcu-sec" data-k="alt"><div class="lbl">ALT</div><div class="win" id="fAlt" title="휠: ±100 (Shift ±1000)">-----</div>
+    <div class="kn"><button data-f="alt-">−</button><button data-f="alt+">+</button></div>
+    <div class="kn"><button data-f="altPull" title="OP CLB / OP DES">당김</button><button data-f="altPush" title="CLB / DES (경로)">누름</button></div></div>
+  <div class="fcu-sec" data-k="vs"><div class="lbl">V/S</div><div class="win" id="fVs" title="휠: ±100">-----</div>
+    <div class="kn"><button data-f="vs-">−</button><button data-f="vs+">+</button></div>
+    <div class="kn"><button data-f="vsPull" title="V/S 모드">당김</button><button data-f="vsPush" title="수평 (0)">누름</button></div></div>
+  <div class="fcu-btns">
+    <button data-f="ap" id="bAp">AP1</button><button data-f="athr" id="bAthr">A/THR</button>
+    <button data-f="loc" id="bLoc">LOC</button><button data-f="appr" id="bAppr">APPR</button>
+    <button data-f="fd" id="bFd">FD</button><button data-f="guide" id="bGuide" title="3D 경로 링">링</button>
+    <button data-f="ndDn" title="ND 범위 축소">ND−</button><button data-f="ndUp" title="ND 범위 확대">ND+</button>
+  </div>
+  <div id="fcuMsg"></div>
+</div>
 <div id="navBox" hidden></div>
-<div id="timeBox" hidden></div>
+
 <div id="toast"></div>
 <div id="pauseLabel" hidden>일시정지 — P 키로 계속</div>
 
@@ -74,6 +97,8 @@
       </select></label>
       <label><input type="checkbox" id="optSound" checked> 소리</label>
       <label><input type="checkbox" id="optCallout" checked> 음성 콜아웃</label>
+      <label title="계획 경로를 따라 하늘에 고리를 표시합니다"><input type="checkbox" id="optGuide"> 3D 경로 링</label>
+      <label title="PFD 위 초록색 비행지시 막대"><input type="checkbox" id="optFd" checked> 비행지시기(FD)</label>
     </div>
     <div id="speedsInfo" class="speeds"></div>
     <div class="row">
@@ -131,6 +156,10 @@
           <tr><td>마우스 드래그 / 휠</td><td>둘러보기 / 확대 · 더블클릭: 정면</td></tr>
           <tr><td>P / Esc / H / I</td><td>일시정지 / 메뉴 / 도움말 / 계기 숨김</td></tr>
           <tr><td>M</td><td>지도 (전체 → 주변 → 끄기)</td></tr>
+          <tr><td>A / Shift+A</td><td>오토파일럿(AP1) / 오토스로틀(A/THR) 켜기·끄기</td></tr>
+          <tr><td>L / Shift+L</td><td>LOC 대기 / APPR(ILS 자동접근) 대기</td></tr>
+          <tr><td>D / U</td><td>비행지시기(FD) / 3D 경로 링 켜기·끄기</td></tr>
+          <tr><td>, / .</td><td>ND(항법화면) 범위 축소 / 확대</td></tr>
           <tr><td>= / -</td><td>시간 가속 ×2 · ×4 · ×8 / 감속 (순항 중)</td></tr>
         </table>
         <h3>조이스틱 (기본 배정)</h3>
@@ -160,6 +189,16 @@
           <li>속도는 VAPP 유지 (메뉴의 참고 속도)</li>
           <li><b>30ft 콜아웃</b>에 스틱을 살짝 당겨 플레어, 20ft "RETARD"에 1: 추력 IDLE</li>
           <li>접지 후 기수를 내리고, S를 계속 눌러 역추력 + B 브레이크</li>
+        </ol>
+        <h3>오토파일럿 사용법 (화면 위 FCU 패널)</h3>
+        <ol class="tips">
+          <li>값 창 위에서 <b>마우스 휠</b>(또는 −/+)로 속도·방위·고도·강하율을 맞춥니다.</li>
+          <li><b>당김</b> = 내가 고른 값으로 비행(선택), <b>누름</b> = 경로(FMS)대로 자동(관리). 관리 상태는 값 대신 <b>---●</b> 표시.</li>
+          <li>이륙: TOGA로 이륙 → 100ft 이상에서 <b>AP1</b> → 1,500ft에서 추력 레버를 <b>2(CL)</b>로 내리면 A/THR이 속도를 맞춤.</li>
+          <li>순항: ALT에 순항고도 → ALT <b>누름</b>(CLB). HDG <b>누름</b>이면 경로(NAV)를 따라갑니다.</li>
+          <li>강하: ND의 <b>T/D</b> 지점에서 ALT를 낮추고 <b>누름</b>(DES, 경로 따라 강하) 또는 <b>당김</b>(OP DES, 빠른 강하).</li>
+          <li>접근: 목적지 20NM 전후에서 <b>APPR</b> → 활주로 연장선(LOC)과 활공경로(G/S)를 자동으로 잡고 <b>자동착륙</b>까지 합니다. 플랩·기어는 직접!</li>
+          <li>스틱을 크게 움직이면 AP가 해제됩니다. 수동 비행 때는 PFD의 초록 FD 막대를 가운데 비행기 표시에 맞추면 경로를 따라갑니다.</li>
         </ol>
         <h3>노선 비행 요령</h3>
         <ol class="tips">

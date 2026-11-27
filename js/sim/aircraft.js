@@ -160,6 +160,8 @@ export class Aircraft {
     let n1Target;
     if (c.rev && this.wow) {
       n1Target = idle + c.revAmt * (AC.revN1Max - idle);
+    } else if (this.athrN1 != null) {
+      n1Target = this.athrN1;                 // 오토스로틀
     } else {
       n1Target = leverToN1(c.lever, idle);
     }
