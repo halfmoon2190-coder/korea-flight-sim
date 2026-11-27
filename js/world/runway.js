@@ -15,6 +15,9 @@ export function buildRunway(def) {
   const thrA = center.clone().addScaledVector(dir, -L / 2);   // names[0] 시단 (이 방향으로 착륙)
   const thrB = center.clone().addScaledVector(dir, L / 2);    // names[1] 시단
   const y0 = (def.elev || 0);
+  // layered: 평지 월드(깊이 비교 없이 순서대로 그림) / 아니면 지형 위에 살짝 띄워 깊이 비교 (로그 깊이 버퍼)
+  const layered = def.layered !== false;
+  const lift = layered ? { surf: 0, paint: 0 } : { surf: 0.12, paint: 0.22 };
 
   // u: thrA에서 활주로 방향 거리, v: 오른쪽 거리 → 월드
   const P = (u, v, y = 0) => new THREE.Vector3(
@@ -22,9 +25,11 @@ export function buildRunway(def) {
 
   // ── 포장면 ──
   // 지면 위 평면 층은 깊이 비교 없이 정해진 순서로 그림 (낮은 각도에서 깜빡임 방지)
-  const asphalt = new THREE.MeshLambertMaterial({ map: asphaltTexture(), color: 0x9a9a9a, depthTest: false });
+  const asphalt = new THREE.MeshLambertMaterial({ map: asphaltTexture(), color: 0x9a9a9a, depthTest: !layered,
+    polygonOffset: !layered, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
   const ext = 60; // 양끝 여유 포장
-  const surf = quadGeo([[P(-ext, -W / 2 - 7.5), P(L + ext, -W / 2 - 7.5), P(L + ext, W / 2 + 7.5), P(-ext, W / 2 + 7.5)]], L / 40, 2);
+  const sy = lift.surf;
+  const surf = quadGeo([[P(-ext, -W / 2 - 7.5, sy), P(L + ext, -W / 2 - 7.5, sy), P(L + ext, W / 2 + 7.5, sy), P(-ext, W / 2 + 7.5, sy)]], L / 40, 2);
   const surfMesh = new THREE.Mesh(surf, asphalt);
   surfMesh.receiveShadow = true;
   surfMesh.renderOrder = -5;
@@ -34,7 +39,7 @@ export function buildRunway(def) {
   const quads = [];
   const addQ = (u0, u1, v0, v1, flip) => {
     if (flip) { [u0, u1] = [L - u1, L - u0]; [v0, v1] = [-v1, -v0]; }
-    quads.push([P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1)]);
+    quads.push([P(u0, v0, lift.paint), P(u1, v0, lift.paint), P(u1, v1, lift.paint), P(u0, v1, lift.paint)]);
   };
   for (const flip of [false, true]) {
     // 시단 표지 16줄
@@ -57,7 +62,7 @@ export function buildRunway(def) {
   for (let u = 110; u < L - 140; u += 50) addQ(u, u + 30, -0.45, 0.45, false);
   // 가장자리선
   addQ(0, L, W / 2 - 0.9, W / 2, false); addQ(0, L, -W / 2, -W / 2 + 0.9, false);
-  const paint = new THREE.MeshLambertMaterial({ color: 0xf2f2f2, depthTest: false });
+  const paint = new THREE.MeshLambertMaterial({ color: 0xf2f2f2, depthTest: !layered, polygonOffset: !layered, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
   const paintMesh = new THREE.Mesh(quadGeo(quads), paint);
   paintMesh.renderOrder = -4; paintMesh.receiveShadow = true;
   group.add(paintMesh);
@@ -66,10 +71,11 @@ export function buildRunway(def) {
   for (const [k, name] of def.names.entries()) {
     const flip = k === 1;
     const tex = designatorTexture(name);
-    const m = new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide, depthTest: false });
+    const m = new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide, depthTest: !layered, polygonOffset: !layered, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
     const u0 = 45, u1 = 92, v = 9;
-    let corners = [P(u0, -v), P(u1, -v), P(u1, v), P(u0, v)];
-    if (flip) corners = [P(L - u0, v), P(L - u1, v), P(L - u1, -v), P(L - u0, -v)];
+    const py = lift.paint;
+    let corners = [P(u0, -v, py), P(u1, -v, py), P(u1, v, py), P(u0, v, py)];
+    if (flip) corners = [P(L - u0, v, py), P(L - u1, v, py), P(L - u1, -v, py), P(L - u0, -v, py)];
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(corners.flatMap(p => [p.x, p.y, p.z]), 3));
     // 캔버스 아래(0) = 시단 쪽, 위(1) = 활주로 안쪽

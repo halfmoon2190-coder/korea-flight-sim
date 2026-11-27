@@ -73,7 +73,8 @@ export class Input {
       KeyF: 'flapDown', KeyR: 'flapUp', KeyG: 'gear', KeyV: 'view', KeyT: 'reverse',
       KeyP: 'pause', KeyN: 'parking',
       Digit1: 'thrIdle', Digit2: 'thrCl', Digit3: 'thrMct', Digit4: 'thrToga',
-      Escape: 'menu', KeyH: 'help', KeyI: 'hud',
+      Escape: 'menu', KeyH: 'help', KeyI: 'hud', KeyM: 'map',
+      Equal: 'timeUp', NumpadAdd: 'timeUp', Minus: 'timeDown', NumpadSubtract: 'timeDown',
     };
     if (code === 'KeyB' && shift) return this.emit('action', 'parking');
     if (code === 'Slash') return this.emit('action', shift ? 'spoilerArm' : 'spoiler');
@@ -141,8 +142,8 @@ export class Input {
     const py = s.invertPitch ? -st.y : st.y;
     if (Math.abs(py) > 0.05) { if (st.analogY) { tp = shape(py); digitalP = false; } else tp = Math.sign(py); }
     if (Math.abs(st.x) > 0.05) { if (st.analogX) { tr = shape(st.x); digitalR = false; } else tr = Math.sign(st.x); }
-    this.pitch = digitalP ? ramp(this.pitch, tp, 1.1 * s.pitchSens, 4.0, dt) : tp;
-    this.roll = digitalR ? ramp(this.roll, tr, 1.6 * s.rollSens, 5.0, dt) : tr;
+    this.pitch = digitalP ? ramp(this.pitch, tp, 1.45 * s.pitchSens, 4.0, dt) : tp;
+    this.roll = digitalR ? ramp(this.roll, tr, 2.1 * s.rollSens, 5.0, dt) : tr;
     if (paused) return;            // 메뉴/일시정지 중에는 미리보기 값만 갱신
     c.pitch = this.pitch; c.roll = this.roll;
 

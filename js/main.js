@@ -3,13 +3,17 @@ import * as THREE from '../vendor/three.module.min.js';
 import { Aircraft } from './sim/aircraft.js';
 import { AC } from './sim/a320.js';
 import { KT, FT, NM, DEG, clamp } from './sim/atmo.js';
-import { createWorld } from './world/world.js';
+import { createEnvironment, createPracticeWorld } from './world/world.js';
+import { createKoreaWorld } from './world/korea.js';
+import { AIRPORTS } from './geo/airports.js';
+import { MAG_VAR_W, toLatLon, trueToMag } from './geo/proj.js';
+import { Minimap } from './ui/minimap.js';
 import { buildAircraftModel } from './view/model.js';
 import { CameraRig } from './view/camera.js';
 import { Input, ACTIONS, saveSettings, defaultSettings } from './input.js';
 import { Instruments } from './ui/instruments.js';
 import { Audio } from './audio.js';
-import { SCENARIOS, WEIGHTS } from './scenarios.js';
+import { SCENARIOS, WEIGHTS, ROUTE_STARTS, setupRoute } from './scenarios.js';
 import { evaluateLanding } from './ui/landing.js';
 
 const $ = (id) => document.getElementById(id);
@@ -20,7 +24,7 @@ const store = {
 
 /* ───────── 초기화 ───────── */
 const quality = store.get('quality', 'medium');
-const renderer = new THREE.WebGLRenderer({ antialias: quality !== 'low', powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ antialias: quality !== 'low', powerPreference: 'high-performance', logarithmicDepthBuffer: true });
 const dpr = window.devicePixelRatio || 1;
 renderer.setPixelRatio(quality === 'high' ? Math.min(dpr, 1.5) : quality === 'medium' ? Math.min(dpr, 1.0) : Math.min(dpr, 0.75));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -30,15 +34,19 @@ $('view3d').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 1, 60000);
-const world = createWorld(scene, quality);
-const rwy = world.runways[0];
+const env = createEnvironment(scene, quality);
+const practice = createPracticeWorld(scene, quality);
+let korea = null;                 // 노선 모드 선택 시 불러옴
+let world = practice;
+const rwy = practice.runways[0];
 
 const ac = new Aircraft(world.groundAt);
 const model = buildAircraftModel(quality);
 scene.add(model.root);
 const rig = new CameraRig(camera, renderer.domElement);
-rig.towerPos.copy(world.towerPos);
+rig.towerPos.copy(world.towerFor(ac.pos));
 const input = new Input();
+const minimap = new Minimap($('minimap'));
 const inst = new Instruments($('hud'));
 const audio = new Audio();
 
@@ -49,13 +57,82 @@ window.addEventListener('resize', () => {
 
 /* ───────── 상태 ───────── */
 let scenario = SCENARIOS.find(s => s.id === store.get('scenario', 'final4')) || SCENARIOS[1];
+let mode = store.get('mode', 'route');
+const route = Object.assign({ dep: 'RKSI', depRwy: '33L', dest: 'RKPC', destRwy: '07', start: 'takeoff' }, store.get('route', {}));
+let timeScale = 1;
+let flight = null;               // 노선 비행 기록 {start, depIcao, destIcao}
 let weightKey = store.get('weight', 'normal');
 let running = false, paused = false, modalOpen = true;
 let speeds = ac.speeds();
 let pendingResult = null;
 
 /* ───────── 메뉴 ───────── */
+function setWorld(w) {
+  world = w;
+  practice.group.visible = w === practice;
+  if (korea) korea.group.visible = w === korea;
+  ac.groundAt = w.groundAt;
+  ac.isWater = w.kind === 'korea' ? w.isWater : null;
+}
+
+async function ensureKorea() {
+  if (korea) return korea;
+  $('loadingTerrain').hidden = false;
+  korea = await createKoreaWorld(scene, quality, (f) => { $('loadBar').style.width = Math.round(f * 100) + '%'; });
+  scene.add(korea.group);
+  minimap.setTerrain(korea);
+  $('loadBar').style.width = '100%';
+  $('loadingTerrain').hidden = true;
+  return korea;
+}
+
+function rwyNames(icao) {
+  const ap = AIRPORTS.find(a => a.icao === icao);
+  return ap.runways.flatMap(r => [r.le, r.he]);
+}
+function buildRouteMenu() {
+  const fill = (sel, items, val) => { sel.innerHTML = ''; for (const [v, t] of items) sel.add(new Option(t, v)); sel.value = val; };
+  const aps = AIRPORTS.map(a => [a.icao, `${a.short} (${a.icao})`]);
+  if (!rwyNames(route.dep).includes(route.depRwy)) route.depRwy = rwyNames(route.dep)[0];
+  if (!rwyNames(route.dest).includes(route.destRwy)) route.destRwy = rwyNames(route.dest)[0];
+  fill($('rDep'), aps, route.dep);
+  fill($('rDest'), aps, route.dest);
+  fill($('rDepRwy'), rwyNames(route.dep).map(n => [n, 'RWY ' + n]), route.depRwy);
+  fill($('rDestRwy'), rwyNames(route.dest).map(n => [n, 'RWY ' + n]), route.destRwy);
+  const list = $('routeStarts'); list.innerHTML = '';
+  for (const st of ROUTE_STARTS) {
+    const b = document.createElement('div');
+    b.className = 'scen' + (st.id === route.start ? ' sel' : '');
+    b.innerHTML = `<b>${st.title}</b><p>${st.desc}</p>`;
+    b.onclick = () => { route.start = st.id; store.set('route', route); buildRouteMenu(); };
+    b.ondblclick = () => startFlight();
+    list.appendChild(b);
+  }
+  const a = AIRPORTS.find(x => x.icao === route.dep), b = AIRPORTS.find(x => x.icao === route.dest);
+  let info = '';
+  if (a !== b) {
+    const R = 6371008.8, D = Math.PI / 180;
+    const p1 = a.lat * D, p2 = b.lat * D, dl = (b.lon - a.lon) * D;
+    const dist = 2 * R * Math.asin(Math.sqrt(Math.sin((p2 - p1) / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2)) / 1852;
+    const brg = (Math.atan2(Math.sin(dl) * Math.cos(p2), Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl)) / D + 360) % 360;
+    const fl = dist > 160 ? 'FL280' : 'FL200';
+    info = `노선 <b>${a.short} → ${b.short}</b> · 거리 <b>${dist.toFixed(0)} NM</b> · 자방위 <b>${Math.round(trueToMag(brg))}°</b> · 권장 순항 ${fl} · 예상 약 ${Math.round(dist / 400 * 60 + 15)}분 (시간 가속 가능)`;
+  } else info = '같은 공항 — 이착륙·장주 연습 (시작 방식에서 접근/최종접근을 고르면 도착 활주로로 접근합니다)';
+  if (b.note) info += `<br>※ ${b.short}: ${b.note}`;
+  $('routeInfo').innerHTML = info;
+}
+['rDep', 'rDepRwy', 'rDest', 'rDestRwy'].forEach(id => $(id).addEventListener('change', () => {
+  route.dep = $('rDep').value; route.dest = $('rDest').value;
+  route.depRwy = $('rDepRwy').value; route.destRwy = $('rDestRwy').value;
+  store.set('route', route); buildRouteMenu();
+}));
+document.querySelectorAll('.tabs [data-mode]').forEach(b => b.addEventListener('click', () => { mode = b.dataset.mode; store.set('mode', mode); buildMenu(); }));
+
 function buildMenu() {
+  document.querySelectorAll('.tabs [data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  $('routePanel').hidden = mode !== 'route';
+  $('practicePanel').hidden = mode !== 'practice';
+  if (mode === 'route') buildRouteMenu();
   const list = $('scenarioList');
   list.innerHTML = '';
   for (const s of SCENARIOS) {
@@ -96,21 +173,39 @@ $('optCallout').onchange = (e) => { store.set('callout', e.target.checked); audi
 $('startBtn').onclick = () => startFlight();
 $('resumeBtn').onclick = () => closeModal('menu');
 
-function startFlight() {
+async function startFlight() {
   applyWeight();
   speeds = ac.speeds(AC.oew + ac.payload + ac.fuelInit);
-  scenario.setup(ac, rwy, speeds);
+  if (mode === 'route') {
+    await ensureKorea();
+    setWorld(korea);
+    setupRoute(ac, korea, route, speeds);
+    flight = { startTime: ac.time, dep: route.dep, dest: route.dest };
+  } else {
+    setWorld(practice);
+    scenario.setup(ac, rwy, speeds);
+    flight = null;
+  }
+  ac.hdgOffset = hdgOffsetAt();
+  ac.updateDerived();
+  timeScale = 1;
   speeds = ac.speeds();
   input.pitch = input.roll = 0;
   running = true; paused = false;
   $('pauseLabel').hidden = true;
   $('result').hidden = true; $('crash').hidden = true;
   pendingResult = null;
-  rig.set(scenario.id === 'takeoff' ? 'cockpit' : rig.view);
+  const isTakeoff = mode === 'route' ? route.start === 'takeoff' : scenario.id === 'takeoff';
+  rig.set(isTakeoff ? 'cockpit' : rig.view);
+  rig.towerPos.copy(world.towerFor(ac.pos));
+  rig.update(ac, model, 0.016);
+  if (world.prime) world.prime(camera.position);
+  if (mode === 'route') minimap.mode = Math.max(minimap.mode, 1);
   audio.enabled = store.get('sound', true); audio.callouts = store.get('callout', true);
   audio.start(); audio.spoken.clear();
   closeModal('menu');
-  toast(scenario.title + (scenario.id === 'takeoff' ? ' — N: 주기 브레이크 해제, 4: TOGA' : ''), 4000);
+  const title = mode === 'route' ? `${route.dep} → ${route.dest} · ${ROUTE_STARTS.find(s => s.id === route.start).title}` : scenario.title;
+  toast(title + (isTakeoff ? ' — N: 주기 브레이크 해제, 4: TOGA' : ''), 4000);
 }
 
 function openModal(id) {
@@ -188,6 +283,7 @@ function handleAction(a) {
     case 'closeResult': $('result').hidden = true; return;
     case 'restart': $('result').hidden = true; startFlight(); return;
     case 'hud': inst.visible = !inst.visible; return;
+    case 'map': minimap.mode = (minimap.mode + 1) % 3; toast(['지도 끄기', '지도: 전체', '지도: 주변 60NM'][minimap.mode]); return;
   }
   if (!running || modalOpen) return;
   switch (a) {
@@ -216,6 +312,11 @@ function handleAction(a) {
     case 'thrCl': c.rev = false; c.lever = AC.detents.CL; break;
     case 'thrMct': c.rev = false; c.lever = AC.detents.MCT; break;
     case 'thrToga': c.rev = false; c.lever = 1; break;
+    case 'timeUp': case 'timeDown': {
+      const next = a === 'timeUp' ? Math.min(8, timeScale * 2) : Math.max(1, timeScale / 2);
+      if (next > 1 && !timeAccelAllowed()) { toast('시간 가속은 지상 2,500ft 이상 순항 중에만 가능합니다'); break; }
+      timeScale = next; toast(timeScale > 1 ? `시간 ×${timeScale}` : '시간 정상'); break;
+    }
   }
 }
 
@@ -240,7 +341,9 @@ function computeGuide() {
     const h = ac.pos.y - 2.9 - end.thr.y;
     const gsAng = Math.atan2(h, dGs) / DEG;
     const cand = { active: true, name: end.name, locDev, gsDev: gsAng - 3, gsValid: loc.u < 0 && dGs > 0, distNm: Math.max(0, -loc.u) / NM };
-    if (!best || Math.abs(cand.locDev) < Math.abs(best.locDev)) best = cand;
+    // 노선 비행 중에는 도착 활주로를 우선 표시
+    cand.pref = mode === 'route' && r.airport && r.airport.icao === route.dest && end.name === route.destRwy;
+    if (!best || (cand.pref && !best.pref) || (cand.pref === best.pref && Math.abs(cand.locDev) < Math.abs(best.locDev))) best = cand;
   }
   return best;
 }
@@ -263,7 +366,13 @@ function processEvents() {
     pendingResult = null;
     $('resGrade').textContent = r.grade; $('resGrade').className = 'grade ' + r.grade;
     $('resTitle').textContent = `${r.title} (${r.pts}점)`;
-    $('resSub').textContent = r.runway ? `활주로 ${r.runway}` : '활주로 밖 접지';
+    let sub = r.runway ? `활주로 ${r.runway}` : '활주로 밖 접지';
+    if (flight && r.runway) {
+      const mins = Math.round((td.time - flight.startTime) / 60);
+      const apName = AIRPORTS.find(x => x.icao === (r.airport || flight.dest))?.short || '';
+      sub = `${apName} ${sub} · 비행시간 ${mins}분`;
+    }
+    $('resSub').textContent = sub;
     $('resTable').innerHTML = r.items.map(it => `<tr><td>${it.label}</td><td class="g-${it.grade}">${it.value}</td><td class="muted">${it.note}</td></tr>`).join('');
     $('result').hidden = false;
     try {
@@ -277,6 +386,7 @@ function processEvents() {
 let warnKey = '';
 function updateWarnings() {
   const ws = ac.crashed ? [] : ac.warnings();
+  if (!ac.crashed && running && terrainAhead()) ws.unshift({ id: 'TERRAIN', level: 'red', text: 'TERRAIN · PULL UP 지형 접근' });
   const key = ws.map(w => w.id).join(',');
   if (key !== warnKey) {
     warnKey = key;
@@ -288,6 +398,8 @@ function updateWarnings() {
     if (w.id === 'OVERSPEED') audio.warn('OVERSPEED', 'overspeed', 4);
     if (w.id === 'GEAR') audio.warn('GEAR', 'too low, gear', 4);
     if (w.id === 'SINK') audio.warn('SINK', 'sink rate', 3);
+    if (w.id === 'TERRAIN') audio.warn('TERRAIN', 'terrain, terrain, pull up', 3);
+    if (w.level === 'red' && timeScale > 1) { timeScale = 1; toast('경고 — 시간 가속 해제'); }
   }
 }
 
@@ -300,17 +412,22 @@ function frame(now) {
   const frozen = !running || paused || modalOpen || !!ac.crashed;
   input.update(dt, ac, frozen);
   if (!frozen) {
-    acc += dt;
+    if (timeScale > 1 && !timeAccelAllowed()) { timeScale = 1; toast('저고도 — 시간 가속 해제'); }
+    acc += dt * timeScale;
     let n = 0;
-    while (acc >= DT && n < 24) { ac.step(DT); acc -= DT; n++; }
-    if (n >= 24) acc = 0;
+    const maxN = 24 * timeScale;
+    while (acc >= DT && n < maxN) { ac.step(DT); acc -= DT; n++; }
+    if (n >= maxN) acc = 0;
+    ac.hdgOffset = hdgOffsetAt();
   }
   processEvents();
 
   model.root.position.copy(ac.pos);
   model.root.quaternion.copy(ac.q);
   model.update(ac, now / 1000);
-  rig.update(ac, model, dt);
+  rig.update(ac, model, dt * (frozen ? 1 : timeScale));
+  if (rig.view === 'tower') rig.towerPos.copy(world.towerFor(ac.pos));
+  env.update(camera, ac.pos, world.kind === 'korea' ? (quality === 'low' ? 40000 : 55000) : 34000);
   world.update(camera.position, ac.pos);
   renderer.render(scene, camera);
 
@@ -318,7 +435,8 @@ function frame(now) {
   inst.draw(ac, { view: rig.view, guide, speeds }, frozen ? 0 : dt);
   audio.update(ac, rig.view, frozen);
 
-  warnT += dt; if (warnT > 0.25) { warnT = 0; updateWarnings(); }
+  warnT += dt; if (warnT > 0.25) { warnT = 0; updateWarnings(); updateNav(); }
+  minimap.draw(ac, world, mode === 'route' && running ? route : null);
   spT += dt; if (spT > 2) { spT = 0; if (running) { const v = speeds.vapp; speeds = ac.speeds(); speeds.vapp = v; } }
   if (!$('settings').hidden) {
     drawStickTest();
@@ -336,4 +454,52 @@ $('loading').remove();
 requestAnimationFrame(frame);
 
 // 디버그/테스트용
-window.__kfs = { ac, rig, world, input, startFlight, handleAction, setScenario: (id) => { scenario = SCENARIOS.find(s => s.id === id); } };
+window.__kfs = {
+  ac, rig, input, startFlight, handleAction, route, minimap, renderer,
+  get world() { return world; }, get korea() { return korea; },
+  setScenario: (id) => { scenario = SCENARIOS.find(s => s.id === id); mode = 'practice'; },
+  setRoute: (cfg) => { Object.assign(route, cfg); mode = 'route'; },
+  get timeScale() { return timeScale; },
+};
+
+/* ───────── 2단계 보조 기능 ───────── */
+function hdgOffsetAt() {
+  if (world.kind !== 'korea') return 0;
+  return world.hdgOffset(ac.pos.x, ac.pos.z) + MAG_VAR_W;
+}
+function timeAccelAllowed() {
+  return !ac.wow && ac.raFt > 2500 && !ac.crashed;
+}
+/** 지상 접근 경고: 현재 속도로 10~40초 뒤 위치의 지형과 비교 */
+function terrainAhead() {
+  if (ac.wow || ac.raFt > 5000 || ac.tas < 50) return false;
+  const landing = ac.gearPos > 0.9 && ac.ctl.flapLever >= 3;
+  for (const t of [10, 20, 30, 40]) {
+    const x = ac.pos.x + ac.vel.x * t, z = ac.pos.z + ac.vel.z * t, y = ac.pos.y + ac.vel.y * t;
+    const g = world.groundAt(x, z);
+    const margin = landing ? 30 : 150;
+    if (y - g < margin && !(landing && nearRunway(x, z))) return true;
+  }
+  return false;
+}
+function nearRunway(x, z) {
+  for (const r of world.runways) if (Math.hypot(x - r.center.x, z - r.center.z) < r.L / 2 + 6000) return true;
+  return false;
+}
+function updateNav() {
+  const box = $('navBox'), tb = $('timeBox');
+  tb.hidden = timeScale <= 1; tb.textContent = `시간 ×${timeScale}`;
+  if (!(running && mode === 'route' && korea && world === korea)) { box.hidden = true; return; }
+  const nv = korea.nav(ac.pos, route.dest);
+  const brg = Math.round(trueToMag(nv.brgTrue));
+  const gs = Math.max(ac.gs / KT, 1);
+  const ete = nv.distNm / gs * 60;
+  const tod = Math.max(0, (ac.altFt - nv.ap.elevFt - 3000) / 1000 * 3 + 10);   // 3NM/1000ft 강하 + 10NM
+  box.hidden = false;
+  box.style.top = '10px';
+  box.style.left = (minimap.mode && !$('minimap').hidden ? $('minimap').getBoundingClientRect().right + 8 : 10) + 'px';
+  box.innerHTML = `목적지 <b>${nv.ap.short} ${nv.ap.icao}</b> · RWY ${route.destRwy}<br>` +
+    `거리 <b>${nv.distNm.toFixed(0)} NM</b> · 방위 <b>${String(brg).padStart(3, '0')}°</b> (현재 ${String(Math.round(ac.dispHeading)).padStart(3, '0')}°)<br>` +
+    `예상 ${ete < 600 ? Math.round(ete) + '분' : '--'} · 강하 시작 약 ${Math.round(tod)} NM 전` +
+    (nv.distNm < tod && ac.altFt > nv.ap.elevFt + 4000 ? ' <b>← 강하하세요</b>' : '');
+}

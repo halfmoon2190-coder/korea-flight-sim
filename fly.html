@@ -18,6 +18,9 @@
   <span id="fps"></span>
 </div>
 <div id="warnings"></div>
+<canvas id="minimap" hidden></canvas>
+<div id="navBox" hidden></div>
+<div id="timeBox" hidden></div>
 <div id="toast"></div>
 <div id="pauseLabel" hidden>일시정지 — P 키로 계속</div>
 
@@ -44,9 +47,26 @@
       <h1>✈ KF-320 연습 비행</h1>
       <a href="./" class="muted small">← 시작 화면</a>
     </div>
-    <p class="muted small">1단계: 연습 공항(인천 33L 규격 활주로 3,750m)에서 기본 조종을 익힙니다. 한반도 지형과 실제 3개 공항은 2단계에서 추가됩니다.</p>
-    <h3>연습 선택</h3>
-    <div id="scenarioList" class="scen-list"></div>
+    <div class="tabs">
+      <button data-mode="route">🇰🇷 대한민국 노선</button>
+      <button data-mode="practice">🛬 연습 공항</button>
+    </div>
+    <div id="routePanel">
+      <p class="muted small">인천(RKSI) · 김해(RKPK) · 제주(RKPC) 사이를 비행합니다. 실제 지형(공개 고도자료)과 실제 활주로 좌표를 사용합니다.</p>
+      <div class="route-grid">
+        <label>출발 공항 <select id="rDep"></select></label>
+        <label>출발 활주로 <select id="rDepRwy"></select></label>
+        <label>도착 공항 <select id="rDest"></select></label>
+        <label>도착 활주로 <select id="rDestRwy"></select></label>
+      </div>
+      <h3>시작 방식</h3>
+      <div id="routeStarts" class="scen-list"></div>
+      <div id="routeInfo" class="speeds"></div>
+    </div>
+    <div id="practicePanel">
+      <p class="muted small">평지의 연습 공항(인천 33L 규격 활주로 3,750m)에서 기본 조종을 익힙니다.</p>
+      <div id="scenarioList" class="scen-list"></div>
+    </div>
     <div class="opts">
       <label>무게 <select id="optWeight"></select></label>
       <label>그래픽 <select id="optQuality">
@@ -110,6 +130,8 @@
           <tr><td>V</td><td>시점 (조종석 → 추적 → 외부 → 관제탑)</td></tr>
           <tr><td>마우스 드래그 / 휠</td><td>둘러보기 / 확대 · 더블클릭: 정면</td></tr>
           <tr><td>P / Esc / H / I</td><td>일시정지 / 메뉴 / 도움말 / 계기 숨김</td></tr>
+          <tr><td>M</td><td>지도 (전체 → 주변 → 끄기)</td></tr>
+          <tr><td>= / -</td><td>시간 가속 ×2 · ×4 · ×8 / 감속 (순항 중)</td></tr>
         </table>
         <h3>조이스틱 (기본 배정)</h3>
         <div id="padHelp" class="muted small"></div>
@@ -139,6 +161,14 @@
           <li><b>30ft 콜아웃</b>에 스틱을 살짝 당겨 플레어, 20ft "RETARD"에 1: 추력 IDLE</li>
           <li>접지 후 기수를 내리고, S를 계속 눌러 역추력 + B 브레이크</li>
         </ol>
+        <h3>노선 비행 요령</h3>
+        <ol class="tips">
+          <li>M 키 지도에서 목적지(분홍 선)를 확인하고, 화면 왼쪽 위의 목적지 방위로 선회</li>
+          <li>순항: 인천↔제주·김해는 FL280 전후, 김해↔제주는 FL200 전후. 추력 2(CL)로 상승 후 원하는 속도에 맞게 조절</li>
+          <li>스틱을 놓으면 고도·방향이 유지되므로 = 키로 시간을 가속할 수 있습니다 (저고도에서는 자동 해제)</li>
+          <li>목적지 약 100NM 전부터 강하 시작 (1분에 약 1,500~2,000ft), 10NM에서 3,000ft 목표</li>
+          <li>김해 18 방향은 북쪽 산지에 주의하세요. 실제로는 36 방향으로 접근한 뒤 선회해 내립니다</li>
+        </ol>
       </div>
     </div>
     <div class="row"><button data-act="closeHelp" class="primary">닫기</button></div>
@@ -146,6 +176,7 @@
 </div>
 
 <div id="loading">불러오는 중…</div>
+<div id="loadingTerrain" class="modal" hidden><div class="card"><h2>한반도 지형 불러오는 중…</h2><div class="bar"><div id="loadBar"></div></div><p class="muted small">처음 한 번은 약 4.5MB를 내려받습니다.</p></div></div>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

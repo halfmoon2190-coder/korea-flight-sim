@@ -56,5 +56,5 @@ export function evaluateLanding(td, runways, vapp) {
   pts = Math.max(0, Math.round(pts));
   const grade = pts >= 90 ? 'A' : pts >= 75 ? 'B' : pts >= 60 ? 'C' : 'D';
   const title = { A: '훌륭한 착륙!', B: '좋은 착륙', C: '무난한 착륙', D: '연습이 더 필요합니다' }[grade];
-  return { pts, grade, title, items, runway: best && best.onRwy ? best.end.name : null };
+  return { pts, grade, title, items, runway: best && best.onRwy ? best.end.name : null, airport: best?.r?.airport?.icao };
 }

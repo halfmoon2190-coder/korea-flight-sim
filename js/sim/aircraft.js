@@ -471,6 +471,9 @@ export class Aircraft {
     this.gs = Math.hypot(this.vel.x, this.vel.z);
     this.vs = this.vel.y;
     this.track = this.gs > 1 ? wrap360(Math.atan2(this.vel.x, -this.vel.z) / DEG) : this.heading;
+    // 표시용 방위 (지도 격자 → 자북 기준). hdgOffset은 월드가 설정
+    this.dispHeading = wrap360(this.heading + (this.hdgOffset || 0));
+    this.dispTrack = wrap360(this.track + (this.hdgOffset || 0));
     this.fpa = V > 5 ? Math.asin(clamp(this.vel.y / V, -1, 1)) / DEG : 0;
     this.altFt = (this.pos.y - (3.3 - AC.gearStatic)) / FT;    // 정지 시 바퀴 높이 기준 (지면 = 공항 표고)
     // 전파고도계: 주바퀴 높이
@@ -510,6 +513,7 @@ export class Aircraft {
       else if (s === 'wing') this.crash('날개 끝이 지면에 닿았습니다 (경사각 과다)');
     }
     if (!this.wow && this.ra < -1) this.crash('지면과 충돌했습니다');
+    if (this.isWater && (this.wow || ground.anyContact || ground.strikes.length) && this.isWater(this.pos.x, this.pos.z)) this.crash('바다에 착수했습니다');
   }
 
   crash(reason) {

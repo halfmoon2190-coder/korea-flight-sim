@@ -57,3 +57,52 @@ export const SCENARIOS = [
     },
   },
 ];
+
+/* ───────── 2단계: 대한민국 노선 ───────── */
+export const ROUTE_STARTS = [
+  { id: 'takeoff', title: '출발 활주로에서 이륙', desc: '출발 공항 활주로에 정렬된 상태에서 시작합니다.' },
+  { id: 'cruise', title: '순항 중 (노선 중간)', desc: '출발·도착 공항의 중간 지점, 순항 고도에서 목적지 방향으로 비행 중.' },
+  { id: 'app12', title: '도착 공항 접근 12NM', desc: '도착 활주로 12NM 앞, 3,000ft 수평, 200kt, 플랩 1.' },
+  { id: 'final4', title: '도착 공항 최종접근 4NM', desc: '도착 활주로 4NM 앞, 착륙 형태로 안정 접근 중.' },
+];
+
+/** 활주로 끝 찾기: world.runways 중 이름이 같은 끝 */
+export function findRunwayEnd(world, icao, name) {
+  for (const r of world.runways) {
+    if (r.airport.icao !== icao) continue;
+    for (const e of r.ends) if (e.name === name) return { rwy: r, end: e };
+  }
+  return null;
+}
+
+export function setupRoute(ac, world, cfg, sp) {
+  if (cfg.start === 'takeoff') {
+    const { end } = findRunwayEnd(world, cfg.dep, cfg.depRwy);
+    const p = end.thr.clone().addScaledVector(end.dir, 70);
+    ac.placeOnGround(p.x, p.z, end.hdg);
+    // 공항 표고 반영
+    ac.pos.y = end.thr.y + 3.3 - 0.40;
+    ac.updateDerived();
+    return;
+  }
+  if (cfg.start === 'cruise') {
+    const a = world.airports.find(x => x.icao === cfg.dep), b = world.airports.find(x => x.icao === cfg.dest);
+    const mx = (a.geo.pos.x + b.geo.pos.x) / 2, mz = (a.geo.pos.z + b.geo.pos.z) / 2;
+    const dist = Math.hypot(b.geo.pos.x - a.geo.pos.x, b.geo.pos.z - a.geo.pos.z);
+    const fl = dist > 300000 ? 28000 : 20000;
+    const hdg = (Math.atan2(b.geo.pos.x - mx, -(b.geo.pos.z - mz)) * 180 / Math.PI + 360) % 360;
+    ac.placeInAir(mx, fl * FT, mz, hdg, fl > 25000 ? 280 : 290, 0, 0, false);
+    return;
+  }
+  const { end } = findRunwayEnd(world, cfg.dest, cfg.destRwy);
+  const d = (cfg.start === 'app12' ? 12 : 4) * NM;
+  const p = end.thr.clone().addScaledVector(end.dir, -d);
+  if (cfg.start === 'app12') {
+    let alt = end.thr.y + 3000 * FT;
+    const gnd = world.groundAt(p.x, p.z);
+    alt = Math.max(alt, gnd + 1500 * FT);
+    ac.placeInAir(p.x, alt + CG_H, p.z, end.hdg, 200, 0, 1, false);
+  } else {
+    ac.placeInAir(p.x, end.thr.y + Math.tan(3 * DEG) * d + TCH + CG_H, p.z, end.hdg, sp.vapp, -3, 4, true);
+  }
+}

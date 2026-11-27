@@ -14,15 +14,14 @@ export const PRACTICE_AIRPORT = {
 const SKY_TOP = new THREE.Color(0x3d7fd6);
 const SKY_HORIZON = new THREE.Color(0xc4dcef);
 
-export function createWorld(scene, quality) {
-  const q = quality;   // 'low' | 'medium' | 'high'
+/** 하늘 · 빛 · 안개 (모든 월드 공통) */
+export function createEnvironment(scene, quality) {
+  const q = quality;
   scene.background = SKY_HORIZON.clone();
-  scene.fog = new THREE.Fog(SKY_HORIZON.getHex(), 2000, q === 'low' ? 22000 : 34000);
-
-  // ── 하늘 ──
-  const skyGeo = new THREE.SphereGeometry(45000, 24, 12);
+  scene.fog = new THREE.Fog(SKY_HORIZON.getHex(), 2000, 34000);
+  const skyGeo = new THREE.SphereGeometry(1, 24, 12);
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false,
+    side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false,
     uniforms: { top: { value: SKY_TOP }, horizon: { value: SKY_HORIZON } },
     vertexShader: `varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
     fragmentShader: `uniform vec3 top; uniform vec3 horizon; varying vec3 vP;
@@ -30,10 +29,9 @@ export function createWorld(scene, quality) {
       if (vP.y < 0.0) c = horizon * 0.95; gl_FragColor = vec4(c, 1.0); }`,
   });
   const sky = new THREE.Mesh(skyGeo, skyMat);
-  sky.renderOrder = -10; sky.frustumCulled = false;
+  sky.renderOrder = -100; sky.frustumCulled = false;
   scene.add(sky);
 
-  // ── 빛 ──
   const hemi = new THREE.HemisphereLight(0xdfeeff, 0x5d6b45, 1.15);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff3dd, 2.1);
@@ -47,8 +45,30 @@ export function createWorld(scene, quality) {
     sun.shadow.normalBias = 0.05;
   }
   const sunDir = sun.position.clone().normalize();
+  return {
+    sun, sky,
+    /** 시야: 고도가 높을수록 멀리 */
+    update(camera, acPos, baseFar) {
+      sky.position.copy(camera.position);
+      sky.scale.setScalar(camera.far * 0.9);
+      const far = baseFar + Math.min(70000, Math.max(0, camera.position.y) * 6);
+      scene.fog.near = Math.max(1500, far * 0.08 + Math.max(0, camera.position.y) * 1.6);   // 고고도에서는 아래 지형이 덜 뿌옇게
+      scene.fog.far = far;
+      if (Math.abs(camera.far - far * 1.15) > 500) { camera.far = far * 1.15; camera.updateProjectionMatrix(); }
+      if (sun.castShadow) {
+        sun.target.position.copy(acPos);
+        sun.position.copy(acPos).addScaledVector(sunDir, 3000);
+      }
+    },
+  };
+}
 
-  // ── 지면 (논밭 패턴) ──
+/** 1단계 연습 월드 (평지) */
+export function createPracticeWorld(scene, quality) {
+  const q = quality;
+  const group = new THREE.Group();
+  scene.add(group);
+
   const groundSize = 120000;
   const groundMat = new THREE.MeshLambertMaterial({ map: fieldsTexture(), color: 0xffffff });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(groundSize, groundSize), groundMat);
@@ -56,34 +76,31 @@ export function createWorld(scene, quality) {
   ground.material.map.repeat.set(groundSize / 6000, groundSize / 6000);
   ground.receiveShadow = q !== 'low';
   groundMat.depthTest = false; ground.renderOrder = -9;
-  scene.add(ground);
+  group.add(ground);
 
-  // 공항 주변 잔디 (세밀한 질감)
+  // 공항 부지 잔디 (활주로 방향 4.8km × 폭 1.5km)
   const grassMat = new THREE.MeshLambertMaterial({ map: grassTexture(), depthTest: false });
   grassMat.map.repeat.set(12, 60);
-  // 활주로를 따라 길쭉한 공항 부지 (활주로 방향 4.8km × 폭 1.5km)
   const grass = new THREE.Mesh(new THREE.PlaneGeometry(1500, 4800), grassMat);
   grass.geometry.rotateX(-Math.PI / 2);
   grass.rotation.y = -330 * Math.PI / 180;
   { const h = 330 * Math.PI / 180; grass.position.set(Math.cos(h) * 350, 0, Math.sin(h) * 350); }
   grass.receiveShadow = q !== 'low';
   grass.renderOrder = -7;
-  scene.add(grass);
+  group.add(grass);
 
-  // 서쪽 바다 (인천처럼 해안 공항 느낌)
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(60000, 120000),
     new THREE.MeshLambertMaterial({ color: 0x3f6f8f, depthTest: false }));
   sea.renderOrder = -8;
   sea.rotation.x = -Math.PI / 2;
   sea.position.set(-38000, 0, 0);
-  scene.add(sea);
+  group.add(sea);
 
-  // ── 원경 산 ──
   const hills = new THREE.Group();
   const hillMat = new THREE.MeshLambertMaterial({ color: 0x5f7a52, flatShading: true });
   const rnd = mulberry(7);
   for (let i = 0; i < 26; i++) {
-    const ang = rnd() * Math.PI * 1.3 - Math.PI * 0.15;      // 주로 북·동·남쪽 (서쪽은 바다)
+    const ang = rnd() * Math.PI * 1.3 - Math.PI * 0.15;
     const dist = 11000 + rnd() * 18000;
     const r = 2500 + rnd() * 4500, hgt = 300 + rnd() * 900;
     const geo = new THREE.ConeGeometry(r, hgt, 9, 3);
@@ -102,30 +119,22 @@ export function createWorld(scene, quality) {
     m.rotation.y = rnd() * 6;
     hills.add(m);
   }
-  scene.add(hills);
+  group.add(hills);
 
-  // ── 공항 ──
   const runways = PRACTICE_AIRPORT.runways.map(def => buildRunway(def));
-  runways.forEach(r => scene.add(r.group));
+  runways.forEach(r => group.add(r.group));
   const apron = buildApron(runways[0], q);
-  scene.add(apron);
-
-  // ── 마을 · 나무 (속도감용) ──
-  scene.add(buildTowns(q, rnd));
+  group.add(apron);
+  group.add(buildTowns(q, rnd));
 
   return {
-    scene, sun, sunDir, sky, runways,
+    kind: 'practice', group, runways,
     airport: PRACTICE_AIRPORT,
-    towerPos: apron.userData.towerPos,
     groundAt: () => 0,
-    update(camPos, acPos) {
-      sky.position.copy(camPos);
-      if (sun.castShadow) {
-        sun.target.position.copy(acPos);
-        sun.position.copy(acPos).addScaledVector(sunDir, 3000);
-      }
-      for (const r of runways) r.updatePapi(camPos);
-    },
+    isWater: () => false,
+    hdgOffset: () => 0,
+    towerFor: () => apron.userData.towerPos,
+    update(camPos) { for (const r of runways) r.updatePapi(camPos); },
   };
 }
 

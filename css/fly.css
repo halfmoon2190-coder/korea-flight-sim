@@ -85,3 +85,16 @@ table.keys td:first-child { font-family: ui-monospace, Consolas, monospace; whit
   .card { padding: 16px; }
   #topbar button { padding: 5px 7px; }
 }
+
+.tabs { display: flex; gap: 6px; margin: 12px 0 4px; }
+.tabs button { flex: 0 0 auto; }
+.tabs button.on { background: var(--accent); border-color: var(--accent); color: #001018; font-weight: 700; }
+.route-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 16px; font-size: 14px; }
+.route-grid label { display: flex; flex-direction: column; gap: 4px; }
+.bar { height: 10px; background: var(--panel2); border-radius: 5px; overflow: hidden; margin: 12px 0; }
+#loadBar { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+#minimap { position: fixed; top: 10px; left: 10px; z-index: 3; border: 1px solid var(--line); border-radius: 10px; background: #0a1520; }
+#navBox { position: fixed; left: 10px; z-index: 3; background: rgba(10,14,20,.78); border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 10px; font: 13px/1.5 ui-monospace, Consolas, monospace; color: #e6edf3; }
+#navBox b { color: #ff4fe0; }
+#timeBox { position: fixed; top: 50px; right: 12px; z-index: 4; background: rgba(255,176,0,.9); color: #1a1000; font-weight: 800; padding: 4px 10px; border-radius: 6px; }

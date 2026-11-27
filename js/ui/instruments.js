@@ -101,7 +101,7 @@ export class Instruments {
       if (big) { g.fillText(Math.abs(p), -hw - 14, yy); g.fillText(Math.abs(p), hw + 14, yy); }
     }
     // 비행경로 기호 (FPV)
-    const drift = wrap180(ac.track - ac.heading);
+    const drift = wrap180(ac.track - ac.heading);   // 편류각 (격자 기준 차이는 동일)
     if (ac.tas > 20) {
       const fx = clamp(drift, -15, 15) * ppd, fy = hy - ac.fpa * ppd;
       g.strokeStyle = C.green; g.lineWidth = 2;
@@ -307,14 +307,14 @@ export class Instruments {
     const cx = x + w / 2, ppd = w / 50;
     g.strokeStyle = C.white; g.fillStyle = C.white; g.lineWidth = 1.5;
     g.font = `${Math.round(h * 0.42)}px monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    const hd = ac.heading;
+    const hd = ac.dispHeading ?? ac.heading;
     for (let d = Math.floor((hd - 30) / 5) * 5; d <= hd + 30; d += 5) {
       const xx = cx + wrap180(d - hd) * ppd;
       g.beginPath(); g.moveTo(xx, y); g.lineTo(xx, y + (d % 10 === 0 ? 9 : 5)); g.stroke();
       if (d % 10 === 0) g.fillText(String(wrap360(d) / 10 | 0).padStart(2, '0'), xx, y + h * 0.65);
     }
     // 항적(초록 다이아몬드)
-    const tx = cx + clamp(wrap180(ac.track - hd), -24, 24) * ppd;
+    const tx = cx + clamp(wrap180((ac.dispTrack ?? ac.track) - hd), -24, 24) * ppd;
     g.fillStyle = C.green; diamond(g, tx, y + 5, 4, 5);
     g.restore();
     g.strokeStyle = C.yellow; g.lineWidth = 3;

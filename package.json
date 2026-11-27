@@ -4,5 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "node tools/simtest.js"
+  },
+  "devDependencies": {
+    "pngjs": "^7.0.0"
   }
 }
