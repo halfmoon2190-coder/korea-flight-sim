@@ -13,7 +13,7 @@ export class CameraRig {
   constructor(camera, dom) {
     this.cam = camera;
     this.view = 'cockpit';
-    this.look = { yaw: 0, pitch: -7 };     // 조종석 시선 (도)
+    this.look = { yaw: 0, pitch: -8 };     // 조종석 시선 (도)
     this.orbit = { yaw: 200, pitch: 12, dist: 70 };
     this.chasePos = null;
     this.towerPos = new THREE.Vector3(0, 100, 0);
@@ -32,7 +32,7 @@ export class CameraRig {
       }
     });
     dom.addEventListener('pointerup', () => { this.drag = null; });
-    dom.addEventListener('dblclick', () => { this.look = { yaw: 0, pitch: -7 }; this.cam.fov = 62; this.cam.updateProjectionMatrix(); });
+    dom.addEventListener('dblclick', () => { this.look = { yaw: 0, pitch: -8 }; this.cam.fov = 62; this.cam.updateProjectionMatrix(); });
     dom.addEventListener('wheel', (e) => {
       if (this.view === 'orbit') this.orbit.dist = THREE.MathUtils.clamp(this.orbit.dist * (e.deltaY > 0 ? 1.1 : 0.9), 25, 600);
       if (this.view === 'cockpit') this.cam.fov = THREE.MathUtils.clamp(this.cam.fov + (e.deltaY > 0 ? 3 : -3), 35, 85);
@@ -45,7 +45,7 @@ export class CameraRig {
   togglePanelLook() {
     if (this.view !== 'cockpit') return false;
     const panel = this.look.pitch < -18;
-    this.look = panel ? { yaw: 0, pitch: -7 } : { yaw: -3, pitch: -27 };
+    this.look = panel ? { yaw: 0, pitch: -8 } : { yaw: -3, pitch: -27 };
     this.cam.fov = panel ? 62 : 48; this.cam.updateProjectionMatrix();
     return !panel;
   }

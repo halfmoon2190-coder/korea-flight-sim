@@ -13,6 +13,7 @@ export class Instruments {
     this.cv = canvas;
     this.ctx = canvas.getContext('2d');
     this.visible = true;
+    this.scale = 0.32;          // 계기판 높이 비율 (크게 0.40 / 보통 0.32 / 작게 0.25)
     this.trend = 0; this.lastIas = null;
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -42,7 +43,7 @@ export class Instruments {
     if (ctx2.panel3d) { this.panelRect = null; return; }      // 3D 조종석: 계기는 3D 화면에 그림
 
     const withNd = !!ctx2.nd;
-    const S = Math.round(clamp(Math.min(this.h * 0.40, (this.w - 40) / (withNd ? 3.1 : 2.3)), 200, 350));
+    const S = Math.round(clamp(Math.min(this.h * this.scale, (this.w - 40) / (withNd ? 3.1 : 2.3)), 150, 350));
     const pad = 10;
     const sysW = withNd ? S : S * 1.25;
     const panelW = S * (withNd ? 2 : 1) + sysW + pad * (withNd ? 4 : 3), panelH = S + pad * 2;

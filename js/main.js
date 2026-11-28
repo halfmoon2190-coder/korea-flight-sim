@@ -58,7 +58,9 @@ scene.add(model.root);
 const rig = new CameraRig(camera, renderer.domElement);
 const cockpit = new Cockpit(quality);
 scene.add(cockpit.root);
-let cockpit3d = store.get('cockpit3d', true);
+let cockpit3d = store.get('cockpit3d_v2', false);
+const PANEL_SIZES = { large: 0.40, medium: 0.32, small: 0.25 };
+let panelSize = store.get('panelSize', 'medium');
 rig.towerPos.copy(world.towerFor(ac.pos));
 const input = new Input();
 const minimap = new Minimap($('minimap'));
@@ -87,6 +89,7 @@ const landLight = new THREE.SpotLight(0xfff2dd, 0, 1600, 0.24, 0.5, 2);
 landLight.position.set(0, -1.2, -13); landLight.target.position.set(0, -40, -400);
 model.root.add(landLight); model.root.add(landLight.target);
 const inst = new Instruments($('hud'));
+inst.scale = ({ large: 0.40, medium: 0.32, small: 0.25 })[store.get('panelSize', 'medium')] || 0.32;
 const audio = new Audio();
 
 window.addEventListener('resize', () => {
@@ -193,6 +196,7 @@ function buildMenu() {
   $('optGuide').checked = store.get('guide', false);
   $('optFd').checked = store.get('fd', true);
   $('opt3d').checked = cockpit3d;
+  $('optPanel').value = panelSize;
   buildEnvMenu();
   updateSpeedsInfo();
 }
@@ -218,7 +222,8 @@ $('optSound').onchange = (e) => { store.set('sound', e.target.checked); audio.en
 $('optCallout').onchange = (e) => { store.set('callout', e.target.checked); audio.callouts = e.target.checked; };
 $('optGuide').onchange = (e) => { store.set('guide', e.target.checked); rings.enabled = e.target.checked; };
 $('optFd').onchange = (e) => { store.set('fd', e.target.checked); ap.fd = e.target.checked; };
-$('opt3d').onchange = (e) => { cockpit3d = e.target.checked; store.set('cockpit3d', cockpit3d); };
+$('opt3d').onchange = (e) => { cockpit3d = e.target.checked; store.set('cockpit3d_v2', cockpit3d); };
+$('optPanel').onchange = (e) => { panelSize = e.target.value; store.set('panelSize', panelSize); inst.scale = PANEL_SIZES[panelSize]; };
 $('startBtn').onclick = () => startFlight();
 $('resumeBtn').onclick = () => closeModal('menu');
 
@@ -342,7 +347,17 @@ function handleAction(a) {
     case 'restart': $('result').hidden = true; startFlight(); return;
     case 'hud': inst.visible = !inst.visible; return;
     case 'checklist': if (running) clPanel.toggle(); return;
-    case 'panelLook': if (running && cockpit3d) { const p = rig.togglePanelLook(); if (p !== false) toast(p ? '계기판 보기 (Q: 바깥 보기)' : '바깥 보기'); } return;
+    case 'panelLook':
+      if (!running) return;
+      if (cockpit3d && rig.view === 'cockpit') { const p = rig.togglePanelLook(); if (p !== false) toast(p ? '계기판 보기 (Q: 바깥 보기)' : '바깥 보기'); return; }
+      { // 2D: 계기판 크기 순환 (크게 → 보통 → 작게 → 숨김)
+        const order = ['large', 'medium', 'small', 'hidden'];
+        const cur = inst.visible ? panelSize : 'hidden';
+        const nx = order[(order.indexOf(cur) + 1) % order.length];
+        if (nx === 'hidden') { inst.visible = false; toast('계기판 숨김 (Q: 다시 표시)'); }
+        else { inst.visible = true; panelSize = nx; store.set('panelSize', nx); inst.scale = PANEL_SIZES[nx]; toast('계기판 ' + { large: '크게', medium: '보통', small: '작게' }[nx]); }
+      }
+      return;
     case 'logbook': showLogbook(); modalOpen = true; return;
     case 'closeLogbook': closeModal('logbook'); return;
     case 'closeReport': closeModal('report'); return;

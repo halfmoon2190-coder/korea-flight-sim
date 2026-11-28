@@ -197,7 +197,7 @@ export class Cockpit {
     this.flood.intensity = night ? 0.6 : 0;
     // 화면 갱신 (약 30Hz)
     this.t += dt;
-    if (this.t < 1 / 30) return;
+    if (this.t < 1 / 15) return;          // 화면 갱신 15Hz (부하 절감)
     this.t = 0;
     const d = this.disp;
     d.pfd.g.setTransform(1, 0, 0, 1, 0, 0); d.pfd.g.clearRect(0, 0, d.pfd.w, d.pfd.h);
