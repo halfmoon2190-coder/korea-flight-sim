@@ -32,13 +32,22 @@ export class CameraRig {
       }
     });
     dom.addEventListener('pointerup', () => { this.drag = null; });
-    dom.addEventListener('dblclick', () => { this.look = { yaw: 0, pitch: -7 }; });
+    dom.addEventListener('dblclick', () => { this.look = { yaw: 0, pitch: -7 }; this.cam.fov = 62; this.cam.updateProjectionMatrix(); });
     dom.addEventListener('wheel', (e) => {
       if (this.view === 'orbit') this.orbit.dist = THREE.MathUtils.clamp(this.orbit.dist * (e.deltaY > 0 ? 1.1 : 0.9), 25, 600);
       if (this.view === 'cockpit') this.cam.fov = THREE.MathUtils.clamp(this.cam.fov + (e.deltaY > 0 ? 3 : -3), 35, 85);
       this.cam.updateProjectionMatrix();
     }, { passive: true });
     dom.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  /** Q: 바깥 보기 ↔ 계기판 내려보기 */
+  togglePanelLook() {
+    if (this.view !== 'cockpit') return false;
+    const panel = this.look.pitch < -18;
+    this.look = panel ? { yaw: 0, pitch: -7 } : { yaw: -3, pitch: -27 };
+    this.cam.fov = panel ? 62 : 48; this.cam.updateProjectionMatrix();
+    return !panel;
   }
 
   next() {
@@ -50,7 +59,7 @@ export class CameraRig {
     this.view = id;
     this.chasePos = null;
     this.cam.fov = id === 'cockpit' ? 62 : 55;
-    this.cam.near = id === 'cockpit' ? 0.3 : 1.0;
+    this.cam.near = id === 'cockpit' ? 0.05 : 1.0;
     this.cam.updateProjectionMatrix();
   }
 

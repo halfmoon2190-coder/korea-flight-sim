@@ -39,6 +39,7 @@ export class Instruments {
       this.trend += (a * 10 - this.trend) * Math.min(1, dt * 2);
     }
     this.lastIas = ac.ias;
+    if (ctx2.panel3d) { this.panelRect = null; return; }      // 3D 조종석: 계기는 3D 화면에 그림
 
     const withNd = !!ctx2.nd;
     const S = Math.round(clamp(Math.min(this.h * 0.40, (this.w - 40) / (withNd ? 3.1 : 2.3)), 200, 350));
@@ -58,6 +59,9 @@ export class Instruments {
     this.drawSystems(g, sx, y0 + pad, sysW, S, ac, speeds);
     this.panelRect = { x: x0, y: y0, w: panelW, h: panelH };
   }
+
+  /** 3D 조종석 화면용 ND */
+  drawNDPanel(g, x, y, S, ac, ndCtx) { drawND(g, x, y, S, ac, ndCtx); }
 
   drawCockpitFrame(g, top) {
     // 글레어실드 + 창틀 (조종석 느낌)

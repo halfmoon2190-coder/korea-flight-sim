@@ -86,6 +86,7 @@ export class Input {
     if (code === 'KeyL') return this.emit('action', shift ? 'appr' : 'loc');
     if (code === 'KeyD') return this.emit('action', 'fd');
     if (code === 'KeyC') return this.emit('action', 'checklist');
+    if (code === 'KeyQ') return this.emit('action', 'panelLook');
     if (code === 'KeyK') return this.emit('action', 'autobrake');
     if (code === 'KeyU') return this.emit('action', 'guide');
     if (code === 'Comma') return this.emit('action', 'ndDn');

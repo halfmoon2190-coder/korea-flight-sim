@@ -21,6 +21,7 @@ import { FailureManager, FAILURES } from './ops/failures.js';
 import { defaultBrief, computeBrief, renderBrief, briefSummary, ChecklistPanel, showReport, saveLog, showLogbook, exportCsv, clearLog } from './ui/ops.js';
 import { buildAircraftModel } from './view/model.js';
 import { CameraRig } from './view/camera.js';
+import { Cockpit } from './view/cockpit.js';
 import { Input, ACTIONS, saveSettings, defaultSettings } from './input.js';
 import { Instruments } from './ui/instruments.js';
 import { Audio } from './audio.js';
@@ -55,6 +56,9 @@ const ac = new Aircraft(world.groundAt);
 const model = buildAircraftModel(quality);
 scene.add(model.root);
 const rig = new CameraRig(camera, renderer.domElement);
+const cockpit = new Cockpit(quality);
+scene.add(cockpit.root);
+let cockpit3d = store.get('cockpit3d', true);
 rig.towerPos.copy(world.towerFor(ac.pos));
 const input = new Input();
 const minimap = new Minimap($('minimap'));
@@ -188,6 +192,7 @@ function buildMenu() {
   $('optCallout').checked = store.get('callout', true);
   $('optGuide').checked = store.get('guide', false);
   $('optFd').checked = store.get('fd', true);
+  $('opt3d').checked = cockpit3d;
   buildEnvMenu();
   updateSpeedsInfo();
 }
@@ -213,6 +218,7 @@ $('optSound').onchange = (e) => { store.set('sound', e.target.checked); audio.en
 $('optCallout').onchange = (e) => { store.set('callout', e.target.checked); audio.callouts = e.target.checked; };
 $('optGuide').onchange = (e) => { store.set('guide', e.target.checked); rings.enabled = e.target.checked; };
 $('optFd').onchange = (e) => { store.set('fd', e.target.checked); ap.fd = e.target.checked; };
+$('opt3d').onchange = (e) => { cockpit3d = e.target.checked; store.set('cockpit3d', cockpit3d); };
 $('startBtn').onclick = () => startFlight();
 $('resumeBtn').onclick = () => closeModal('menu');
 
@@ -336,6 +342,7 @@ function handleAction(a) {
     case 'restart': $('result').hidden = true; startFlight(); return;
     case 'hud': inst.visible = !inst.visible; return;
     case 'checklist': if (running) clPanel.toggle(); return;
+    case 'panelLook': if (running && cockpit3d) { const p = rig.togglePanelLook(); if (p !== false) toast(p ? '계기판 보기 (Q: 바깥 보기)' : '바깥 보기'); } return;
     case 'logbook': showLogbook(); modalOpen = true; return;
     case 'closeLogbook': closeModal('logbook'); return;
     case 'closeReport': closeModal('report'); return;
@@ -514,6 +521,9 @@ function frame(now) {
 
   model.root.position.copy(ac.pos);
   model.root.quaternion.copy(ac.q);
+  // 3D 조종석: 렌더 전에 자세를 맞춰야 흔들림이 없음
+  cockpit.root.visible = cockpit3d && rig.view === 'cockpit';
+  cockpit.root.position.copy(ac.pos); cockpit.root.quaternion.copy(ac.q);
   model.update(ac, now / 1000);
   rig.update(ac, model, dt * (frozen ? 1 : timeScale));
   if (rig.view === 'tower') rig.towerPos.copy(world.towerFor(ac.pos));
@@ -529,7 +539,12 @@ function frame(now) {
   renderer.render(scene, camera);
 
   const guide = computeGuide();
-  inst.draw(ac, { view: rig.view, guide, speeds, ap, nd: running ? { world, plan: ap.plan, ap, range: ndRange, airports: ndAirports(), wind: windInfo() } : null }, frozen ? 0 : dt);
+  const use3d = cockpit3d && rig.view === 'cockpit';
+  const ndCtx = running ? { world, plan: ap.plan, ap, range: ndRange, airports: ndAirports(), wind: windInfo() } : null;
+  inst.draw(ac, { view: rig.view, guide, speeds, ap, nd: ndCtx, panel3d: use3d }, frozen ? 0 : dt);
+  if (use3d) {
+    cockpit.update(ac, ap, inst, { guide, speeds, nd: ndCtx || { world, plan: null, ap, range: ndRange, airports: [] } }, lastWarnings, dt, env.time === 'night');
+  }
   rings.update(ac, ap.lastGuide ? ap.lastGuide.s : 0, running && !ac.crashed);
   fcuT += dt; if (fcuT > 0.1) { fcuT = 0; updateFcu(); }
   audio.update(ac, rig.view, frozen);
