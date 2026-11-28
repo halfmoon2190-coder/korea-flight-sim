@@ -84,7 +84,7 @@ export function buildAircraftModel(quality) {
     cone.rotation.x = Math.PI / 2; cone.position.z = 2.6; eg.add(cone);
     const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, 3.6), white);
     pylon.position.set(0, 1.0, 0.6); eg.add(pylon);
-    eg.position.set(s * 5.75, -1.65, -3.5);
+    eg.position.set(s * 5.75, -1.42, -3.5);
     root.add(eg);
   }
   // 수평꼬리날개

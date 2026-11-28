@@ -71,7 +71,7 @@ export function computeBrief(b, route, geo, perfCache = {}) {
   const ld = landingDistance({ lw, autobrake: +b.ab, vapp: sp.vapp });
   return {
     altn, altnDist, cruiseFt, payload, zfw, tow, lw, fuel, checks, thrust, flexTemp, flexMax: pc.flexMax,
-    to, tora: geo.depRwyLen, ld, lda: geo.destRwyLen, vapp: sp.vapp, time: tripTime(geo.planDistNm),
+    to, tora: geo.depRwyLen, ld, lda: geo.destRwyLen, vapp: sp.vapp, time: tripTime(geo.planDistNm), wind: geo.wind,
   };
 }
 
@@ -109,11 +109,14 @@ export function renderBrief(b, r, route) {
   $('bLdRwy').textContent = `활주로 ${route.destRwy} · ${fmt(r.lda)}m`;
   $('bLd').innerHTML = `<tr><td>착륙 속도 VAPP (FULL)</td><td>${r.vapp} kt</td></tr>` +
     `<tr><td>필요 착륙거리 (×1.15)</td><td class="${ldOk ? 'ok-t' : 'bad-t'}">${fmt(r.ld.required)}m</td></tr>` +
-    `<tr><td>예상 실제 거리</td><td>${fmt(r.ld.actual)}m</td></tr>`;
+    `<tr><td>예상 실제 거리</td><td>${fmt(r.ld.actual)}m</td></tr>` +
+    (r.wind ? `<tr><td>도착 활주로 바람 (${r.wind.text})</td><td class="${r.wind.head < -10 || Math.abs(r.wind.cross) > 33 ? 'bad-t' : Math.abs(r.wind.cross) > 15 ? 'warn-t' : ''}">정풍 ${Math.round(r.wind.head)} · 측풍 ${Math.round(Math.abs(r.wind.cross))}kt</td></tr>` : '');
   const warn = [];
   for (const c of r.checks) if (c.v > c.lim) warn.push(`${c.name} 한계 초과`);
   if (!toOk) warn.push('이륙거리 부족 — 플랩 2 또는 TOGA, 중량을 줄이세요');
   if (!ldOk) warn.push('착륙거리 부족 — 오토브레이크 MED 또는 중량 감소');
+  if (r.wind && r.wind.head < -10) warn.push('뒷바람 10kt 초과 — 반대 방향 활주로를 고려');
+  if (r.wind && Math.abs(r.wind.cross) > 33) warn.push('측풍 한계(33kt) 초과');
   $('bWarn').textContent = warn.length ? '⚠ ' + warn.join(' · ') : '';
   return warn.length === 0;
 }

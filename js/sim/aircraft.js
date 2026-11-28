@@ -38,6 +38,9 @@ export class Aircraft {
       autobrake: 0,                     // 0 끔, 1 LO, 2 MED, 3 MAX(RTO)
     };
     this.n1 = AC.n1IdleGround;
+    this.n1s = [AC.n1IdleGround, AC.n1IdleGround];
+    if (!this.fail) this.fail = { eng: [false, false], gear: false, flaps: false };
+    if (!this.wind) this.wind = new Vector3();
     this.flapPos = 0; this.is1F = false;
     this.gearPos = 1;
     this.sbPos = 0; this.gsPos = 0;
@@ -95,7 +98,7 @@ export class Aircraft {
     this.setAttitude(hdg, (tr.alpha + gammaDeg * DEG) / DEG, 0);
     const g = gammaDeg * DEG, h = hdg * DEG;
     this.vel.set(Math.sin(h) * Math.cos(g) * V, Math.sin(g) * V, -Math.cos(h) * Math.cos(g) * V);
-    this.n1 = tr.n1;
+    this.n1 = tr.n1; this.n1s = [tr.n1, tr.n1];
     this.ctl.lever = n1ToLever(tr.n1, AC.n1IdleFlight);
     this.ths = clamp(tr.delta, AC.thsMin, AC.thsMax);
     this.elev = 0;
@@ -141,13 +144,14 @@ export class Aircraft {
   updateSystems(dt) {
     const c = this.ctl;
     // 플랩: 약 4초/단
-    if (c.flapLever !== Math.round(this.flapPos) || Math.abs(c.flapLever - this.flapPos) > 1e-3) {
+    if (!this.fail.flaps && (c.flapLever !== Math.round(this.flapPos) || Math.abs(c.flapLever - this.flapPos) > 1e-3)) {
       this.flapPos = approach(this.flapPos, c.flapLever, 0.25, dt);
     }
     if (c.flapLever !== 1) this.is1F = false;
     if (c.flapLever === 1 && this.ias > 210) this.is1F = false;   // 210kt 이상이면 자동으로 1 로
     // 기어: 약 10초
-    this.gearPos = approach(this.gearPos, c.gearDown ? 1 : 0, 0.1, dt);
+    if (!this.fail.gear) this.gearPos = approach(this.gearPos, c.gearDown ? 1 : 0, 0.1, dt);
+    else if (c.gravityGear) this.gearPos = approach(this.gearPos, 1, 0.045, dt);   // 중력 비상 내림 (약 22초)
     // 스피드브레이크 (FULL 플랩에서는 사용 불가)
     const sbTarget = c.flapLever === 4 ? 0 : c.sbLever;
     this.sbPos = approach(this.sbPos, sbTarget, 0.8, dt);
@@ -188,11 +192,16 @@ export class Aircraft {
         n1Target = flexN1(this.flexTemp);
       } else if (c.lever < AC.detents.MCT - 0.01) this.flexLatched = false;
     }
-    const tau = this.n1 < 50 ? 2.2 : 1.1;
-    let dn = (n1Target - this.n1) / tau;
-    dn = clamp(dn, -12, this.n1 < 40 ? 6 : 14);
-    this.n1 += dn * dt;
-    if (this.fuel <= 0) this.n1 = approach(this.n1, 0, 8, dt);
+    for (let e = 0; e < 2; e++) {
+      let n = this.n1s[e];
+      if (this.fail.eng[e] || this.fuel <= 0) { this.n1s[e] = approach(n, Math.min(9, this.ias * 0.05), 6, dt); continue; }   // 바람개비 회전
+      const tau = n < 50 ? 2.2 : 1.1;
+      let dn = (n1Target - n) / tau;
+      dn = clamp(dn, -12, n < 40 ? 6 : 14);
+      this.n1s[e] = n + dn * dt;
+    }
+    const live = this.n1s.filter((_, e) => !this.fail.eng[e]);
+    this.n1 = live.length ? live.reduce((a, b) => a + b, 0) / live.length : this.n1s[0];
     // 역추력 문 (전개 2초)
     this.revPos = approach(this.revPos || 0, c.rev && this.wow ? 1 : 0, 0.6, dt);
   }
@@ -204,7 +213,7 @@ export class Aircraft {
     this.updateSystems(dt);
 
     const qInv = _q.copy(this.q).invert();
-    const vb = _v.copy(this.vel).applyQuaternion(qInv);
+    const vb = _v.copy(this.vel).sub(this.wind).applyQuaternion(qInv);     // 공기에 대한 속도
     const u = -vb.z, vR = vb.x, wD = -vb.y;
     const V = Math.max(0.5, vb.length());
     const alpha = Math.atan2(wD, Math.max(u, 0.1));
@@ -248,16 +257,21 @@ export class Aircraft {
 
     // 추력
     const lapse = thrustLapse(mach, atm.sigma);
-    const frac = n1ToThrustFrac(this.n1) * (this.fuel > 0 ? 1 : 0);
-    let T = AC.thrustStatic * AC.nEng * frac * lapse;
+    const Te = this.n1s.map((n, e) => (this.fail.eng[e] || this.fuel <= 0) ? 0 : AC.thrustStatic * n1ToThrustFrac(n) * lapse);
+    let T = Te[0] + Te[1];
     // 역추력: 역추력 문이 열린 만큼 앞쪽 추력이 뒤로 바뀜
     const rp = this.revPos || 0;
     const Tnet = T * (1 - rp) - T * rp * AC.revEff;
     this.thrust = Tnet;
     Floc.z += -Tnet;
     Mloc.x += -AC.thrustY * Tnet;
+    // 좌우 추력 차이 → 요 모멘트 (엔진 위치 ±5.75m)
+    const k = (1 - rp) - rp * AC.revEff;
+    Mloc.y += 5.75 * (Te[1] - Te[0]) * k;
+    if (this.fail.eng[0] || this.fail.eng[1]) Floc.z += qS * 0.003;   // 멈춘 엔진 항력
     // 연료 소모 (TSFC 근사)
-    this.fuelFlow = Math.max(0.08 * AC.nEng * (this.n1 > 15 ? 1 : 0), T * 1.02e-5 * (1 + 0.85 * mach));
+    const running = 2 - (this.fail.eng[0] ? 1 : 0) - (this.fail.eng[1] ? 1 : 0);
+    this.fuelFlow = Math.max(0.08 * running, T * 1.02e-5 * (1 + 0.85 * mach));
     this.fuel = Math.max(0, this.fuel - this.fuelFlow * dt);
     this.mass = AC.oew + this.payload + this.fuel;
 
@@ -468,7 +482,9 @@ export class Aircraft {
       this.ail = approach(this.ail, cmd, 4, dt);
       // 선회 협조 + 요 댐퍼
       const rc = G * Math.sin(phi) * Math.cos(theta) / V;
-      const rcmd = clamp(c.rudder * rudLimit + (2.5 * beta + 2.0 * (rc - r)) * Math.min(gs, 2), -rudLimit, rudLimit);
+      // 조종사가 러더를 쓰거나(측풍 디크랩) 플레어 중이면 옆미끄럼 보정을 줄임
+      const bGain = this.law === 'FLARE' ? 0 : clamp(1 - Math.abs(c.rudder) * 3, 0, 1);
+      const rcmd = clamp(c.rudder * rudLimit + (2.5 * beta * bGain + 2.0 * (rc - r) * (this.law === 'FLARE' ? 0.3 : 1)) * Math.min(gs, 2), -rudLimit, rudLimit);
       this.rud = approach(this.rud, rcmd, 2, dt);
     }
 
@@ -490,10 +506,12 @@ export class Aircraft {
     this.heading = wrap360(Math.atan2(fwd.x, -fwd.z) / DEG);
     const atm = isa(this.pos.y);
     const V = this.vel.length();
-    this.tas = V;
-    // 지시대기속도 (EAS 근사): 정면 성분 기준
-    this.ias = Math.sqrt(atm.sigma) * Math.max(0, this.vel.dot(fwd)) / KT;
-    this.mach = V / atm.a;
+    // 지시대기속도 (EAS 근사): 공기에 대한 속도의 정면 성분
+    const air = this.wind ? this.vel.clone().sub(this.wind) : this.vel;
+    this.ias = Math.sqrt(atm.sigma) * Math.max(0, air.dot(fwd)) / KT;
+    this.tasAir = air.length();
+    this.tas = this.tasAir;
+    this.mach = this.tasAir / atm.a;
     this.gs = Math.hypot(this.vel.x, this.vel.z);
     this.vs = this.vel.y;
     this.track = this.gs > 1 ? wrap360(Math.atan2(this.vel.x, -this.vel.z) / DEG) : this.heading;

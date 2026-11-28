@@ -65,8 +65,8 @@ export const AC = {
   // 기체가 땅에 닿으면 안 되는 점들
   strikePoints: [
     { name: 'tail',   p: [0, -0.2, 16],     kind: 'tail' },
-    { name: 'engL',   p: [-5.75, -2.6, -2], kind: 'engine' },
-    { name: 'engR',   p: [5.75, -2.6, -2],  kind: 'engine' },
+    { name: 'engL',   p: [-5.75, -2.35, -2], kind: 'engine' },
+    { name: 'engR',   p: [5.75, -2.35, -2],  kind: 'engine' },
     { name: 'tipL',   p: [-17, -0.2, 4],    kind: 'wing' },
     { name: 'tipR',   p: [17, -0.2, 4],     kind: 'wing' },
     { name: 'bellyF', p: [0, -2.1, -9],     kind: 'belly' },

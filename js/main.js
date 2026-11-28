@@ -14,6 +14,10 @@ import { RouteGuide } from './view/routeguide.js';
 import { ND_RANGES } from './ui/nd.js';
 import { ChecklistState, CHECKLISTS } from './ops/checklists.js';
 import { FlightMonitor } from './ops/monitor.js';
+import { Weather, WX_PRESETS } from './sim/weather.js';
+import { Clouds } from './world/clouds.js';
+import { ATC } from './ops/atc.js';
+import { FailureManager, FAILURES } from './ops/failures.js';
 import { defaultBrief, computeBrief, renderBrief, briefSummary, ChecklistPanel, showReport, saveLog, showLogbook, exportCsv, clearLog } from './ui/ops.js';
 import { buildAircraftModel } from './view/model.js';
 import { CameraRig } from './view/camera.js';
@@ -64,6 +68,20 @@ const perfCache = {};
 const clState = new ChecklistState();
 const clPanel = new ChecklistPanel(clState);
 let monitor = null, reportShown = false, lastWarnings = [];
+// 5단계: 날씨 · 시간대 · 관제 · 고장
+const weather = new Weather();
+const clouds = new Clouds(scene);
+const envCfg = Object.assign({ wx: 'calm', tod: 'day', fail: 'none', atc: false, cs: 'KFS101',
+  custom: { dir: 270, spd: 12, gust: 0, turb: 0.25, vis: 10000, base: 3000, cover: 0.3 } }, store.get('env', {}));
+const atc = new ATC({
+  say: (t) => { if (store.get('callout', true)) audio.say(t, 1.08); },
+  onMsg: (m) => showRadio(m),
+  onDeviation: (t) => monitor?.add('flight', t, -5),
+});
+const failures = new FailureManager({ onFail: (f) => showEcam(f) });
+const landLight = new THREE.SpotLight(0xfff2dd, 0, 1600, 0.24, 0.5, 2);
+landLight.position.set(0, -1.2, -13); landLight.target.position.set(0, -40, -400);
+model.root.add(landLight); model.root.add(landLight.target);
 const inst = new Instruments($('hud'));
 const audio = new Audio();
 
@@ -164,11 +182,13 @@ function buildMenu() {
   const ws = $('optWeight');
   if (!ws.options.length) for (const [k, w] of Object.entries(WEIGHTS)) ws.add(new Option(w.label, k));
   ws.value = weightKey;
+  ws.parentElement.hidden = mode === 'route';    // 노선 비행은 운항 준비의 탑재량 사용
   $('optQuality').value = quality;
   $('optSound').checked = store.get('sound', true);
   $('optCallout').checked = store.get('callout', true);
   $('optGuide').checked = store.get('guide', false);
   $('optFd').checked = store.get('fd', true);
+  buildEnvMenu();
   updateSpeedsInfo();
 }
 function applyWeight() {
@@ -220,6 +240,7 @@ async function startFlight() {
   speeds = ac.speeds();
   setupAutoflight();
   setupMonitor();
+  setupEnvironment();
   input.pitch = input.roll = 0;
   running = true; paused = false;
   $('pauseLabel').hidden = true;
@@ -350,6 +371,7 @@ function handleAction(a) {
     case 'thrCl': c.rev = false; c.lever = AC.detents.CL; break;
     case 'thrMct': c.rev = false; c.lever = AC.detents.MCT; break;
     case 'thrToga': c.rev = false; c.lever = 1; break;
+    case 'gravityGear': c.gravityGear = true; c.gearDown = true; toast('랜딩기어 중력 비상 내림 — 약 20초'); break;
     case 'autobrake': c.autobrake = (c.autobrake + 1) % 4; toast('오토브레이크 ' + ['끔', 'LO', 'MED', 'MAX'][c.autobrake]); break;
     case 'timeUp': case 'timeDown': {
       const next = a === 'timeUp' ? Math.min(8, timeScale * 2) : Math.max(1, timeScale / 2);
@@ -472,6 +494,7 @@ function frame(now) {
     const userTakeover = Math.abs(input.pitch) > 0.35 || Math.abs(input.roll) > 0.35;
     while (acc >= DT && n < maxN) {
       if (ap.ap && userTakeover) ap.disconnect('조종간 입력 — AP 해제');
+      ac.wind = weather.sample(DT, ac.altFt, Math.max(0, ac.ra), ac.hdgOffset || 0);
       ap.update(DT);
       ac.step(DT); acc -= DT; n++;
     }
@@ -483,6 +506,10 @@ function frame(now) {
     monitor.update(dt * timeScale, lastWarnings, ap.lastGuide);
     if (monitor.t.stop && !reportShown && performance.now() > (pendingReportAt ||= performance.now() + 2500)) finishFlight();
   }
+  if (running && monitor && !frozen) {
+    atc.update(dt * timeScale, ac, ap, monitor.phase, ap.lastGuide, ap.plan);
+    failures.update(dt * timeScale, ac, ap, monitor.phase, speeds);
+  }
   if (running && monitor) clPanel.tick({ ac, ap, vapp: speeds.vapp, phase: monitor.phase, dt, onComplete: (cl) => toast('✓ ' + cl.title + ' 완료') });
 
   model.root.position.copy(ac.pos);
@@ -490,12 +517,19 @@ function frame(now) {
   model.update(ac, now / 1000);
   rig.update(ac, model, dt * (frozen ? 1 : timeScale));
   if (rig.view === 'tower') rig.towerPos.copy(world.towerFor(ac.pos));
-  env.update(camera, ac.pos, world.kind === 'korea' ? (quality === 'low' ? 40000 : 55000) : 34000);
+  const camFt = camera.position.y / FT;
+  env.update(camera, ac.pos, world.kind === 'korea' ? (quality === 'low' ? 40000 : 55000) : 34000, running && weather.inCloud(camFt));
+  if (running && weather.base !== null) {
+    const night = env.time === 'night';
+    clouds.update(camera.position, weather.base * FT, weather.top * FT, weather.cover, scene.fog.far * 1.5, scene.fog.color,
+      night ? { light: new THREE.Color(0.18, 0.2, 0.24), dark: new THREE.Color(0.08, 0.09, 0.11) } : env.time === 'day' ? { light: new THREE.Color(1, 1, 1), dark: new THREE.Color(0.72, 0.75, 0.8) } : { light: new THREE.Color(1, 0.86, 0.76), dark: new THREE.Color(0.55, 0.5, 0.55) });
+  } else clouds.update(camera.position, null);
+  landLight.intensity = env.time === 'night' && ac.gearPos > 0.5 && running ? 2.5e5 : 0;
   world.update(camera.position, ac.pos);
   renderer.render(scene, camera);
 
   const guide = computeGuide();
-  inst.draw(ac, { view: rig.view, guide, speeds, ap, nd: running ? { world, plan: ap.plan, ap, range: ndRange, airports: ndAirports() } : null }, frozen ? 0 : dt);
+  inst.draw(ac, { view: rig.view, guide, speeds, ap, nd: running ? { world, plan: ap.plan, ap, range: ndRange, airports: ndAirports(), wind: windInfo() } : null }, frozen ? 0 : dt);
   rings.update(ac, ap.lastGuide ? ap.lastGuide.s : 0, running && !ac.crashed);
   fcuT += dt; if (fcuT > 0.1) { fcuT = 0; updateFcu(); }
   audio.update(ac, rig.view, frozen);
@@ -526,7 +560,8 @@ window.__kfs = {
   setRoute: (cfg) => { Object.assign(route, cfg); mode = 'route'; },
   get timeScale() { return timeScale; }, get monitor() { return monitor; }, get running() { return running; }, get modalOpen() { return modalOpen; },
   /** 테스트용 빨리 감기 (초) */
-  ff(sec) { const n = Math.round(sec / DT); for (let i = 0; i < n && !ac.crashed; i++) { ap.update(DT); ac.step(DT); if (i % 120 === 0) ac.hdgOffset = hdgOffsetAt(); } processEvents(); },
+  weather, atc, failures, env, setEnv: (cfg) => Object.assign(envCfg, cfg),
+  ff(sec) { const n = Math.round(sec / DT); for (let i = 0; i < n && !ac.crashed; i++) { ac.wind = weather.sample(DT, ac.altFt, Math.max(0, ac.ra), ac.hdgOffset || 0); ap.update(DT); ac.step(DT); if (i % 120 === 0) ac.hdgOffset = hdgOffsetAt(); } processEvents(); },
 };
 
 /* ───────── 2단계 보조 기능 ───────── */
@@ -696,6 +731,14 @@ function routeGeo() {
     planDistNm: plan.totalToRwy / NM, planCruiseFt: Math.round(plan.cruiseAlt / FT / 1000) * 1000,
     depRwyLen: Math.round(dep.rwy.L), destRwyLen: Math.round(dst.rwy.L), depElevFt: depAp.elevFt, destElevFt: dstAp.elevFt,
     speedsFor: (m) => ac.speeds(m),
+    wind: (() => {
+      const wx = new Weather();
+      wx.set(envCfg.wx === 'custom' ? envCfg.custom : WX_PRESETS[envCfg.wx]);
+      const mag = (dst.end.hdg + korea.hdgOffset(dst.end.thr.x, dst.end.thr.z) + MAG_VAR_W + 360) % 360;
+      wx.resolve(mag);
+      const c = wx.components(mag);
+      return wx.spd < 1 ? null : { text: wx.atis(), head: c.head, cross: c.cross };
+    })(),
   };
 }
 function recomputeBrief() {
@@ -756,7 +799,10 @@ function finishFlight() {
   reportShown = true;
   const start = mode === 'route' ? ROUTE_STARTS.find(s => s.id === route.start).title : scenario.title;
   const routeText = mode === 'route' ? `${route.dep} ${route.depRwy} → ${route.dest} ${route.destRwy} · ${start}` : `연습 공항 · ${start}`;
-  const rep = monitor.report({ routeText });
+  const wxTxt = envCfg.wx !== 'calm' ? ' · ' + (envCfg.wx === 'custom' ? '사용자 날씨' : WX_PRESETS[envCfg.wx].label.split(' (')[0]) : '';
+  const todTxt = envCfg.tod !== 'day' ? ' · ' + { dawn: '새벽', dusk: '석양', night: '야간' }[envCfg.tod] : '';
+  const failTxt = failures.fired ? ' · 고장: ' + FAILURES[failures.pick].label : '';
+  const rep = monitor.report({ routeText: routeText + wxTxt + todTxt + failTxt });
   for (const m of MODALS) $(m).hidden = true;
   showReport(rep); modalOpen = true;
   saveLog({
@@ -764,4 +810,95 @@ function finishFlight() {
     fuelUsed: rep.fuelUsed, fuelRemain: rep.fuelRemain, maxAlt: rep.maxAlt, landingGrade: rep.landing?.grade ?? null, landingPts: rep.landing?.pts ?? null,
     fpm: rep.landing?.fpm ?? null, ga: rep.ga, overall: rep.overall, grade: rep.grade, crashed: rep.crashed,
   });
+}
+
+/* ───────── 5단계: 환경 · 훈련 ───────── */
+function buildEnvMenu() {
+  const wp = $('wxPreset');
+  if (!wp.options.length) {
+    for (const [k, p] of Object.entries(WX_PRESETS)) wp.add(new Option(p.label, k));
+    wp.add(new Option('사용자 설정', 'custom'));
+    for (const [k, f] of Object.entries(FAILURES)) $('failSel').add(new Option(f.label, k));
+    const save = () => { store.set('env', envCfg); envSummary(); };
+    wp.onchange = () => { envCfg.wx = wp.value; $('wxCustom').hidden = wp.value !== 'custom'; save(); };
+    $('tod').onchange = () => { envCfg.tod = $('tod').value; save(); };
+    $('failSel').onchange = () => { envCfg.fail = $('failSel').value; save(); };
+    $('atcOn').onchange = () => { envCfg.atc = $('atcOn').checked; save(); };
+    $('callsign').onchange = () => { envCfg.cs = ($('callsign').value || 'KFS101').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); save(); };
+    const cf = [['wDir', 'dir'], ['wSpd', 'spd'], ['wGust', 'gust'], ['wTurb', 'turb'], ['wVis', 'vis'], ['wBase', 'base'], ['wCover', 'cover']];
+    for (const [id, k] of cf) $(id).onchange = () => { envCfg.custom[k] = +$(id).value; save(); };
+  }
+  wp.value = envCfg.wx; $('tod').value = envCfg.tod; $('failSel').value = envCfg.fail; $('atcOn').checked = envCfg.atc; $('callsign').value = envCfg.cs;
+  const c = envCfg.custom;
+  $('wDir').value = c.dir; $('wSpd').value = c.spd; $('wGust').value = c.gust; $('wTurb').value = c.turb; $('wVis').value = c.vis; $('wBase').value = c.base; $('wCover').value = c.cover;
+  $('wxCustom').hidden = envCfg.wx !== 'custom';
+  envSummary();
+}
+function envSummary() {
+  const t = { day: '낮', dawn: '새벽', dusk: '석양', night: '밤' }[envCfg.tod];
+  const w = envCfg.wx === 'custom' ? `바람 ${envCfg.custom.dir}°/${envCfg.custom.spd}kt` : WX_PRESETS[envCfg.wx].label.split(' (')[0];
+  $('envSum').textContent = `— ${w} · ${t}${envCfg.atc ? ' · 관제' : ''}${envCfg.fail !== 'none' ? ' · 고장: ' + FAILURES[envCfg.fail].label : ''}`;
+}
+function destRunwayMag() {
+  if (!ap.app) return 0;
+  return (ap.app.end.hdg + hdgOffsetAt() + 360) % 360;
+}
+function setupEnvironment() {
+  const p = envCfg.wx === 'custom' ? { ...envCfg.custom, base: envCfg.custom.cover > 0 ? envCfg.custom.base : null } : WX_PRESETS[envCfg.wx];
+  weather.set(p);
+  weather.resolve(destRunwayMag());
+  env.setConditions({ time: envCfg.tod, vis: weather.vis, overcast: weather.cover > 0.8 ? weather.cover : weather.cover * 0.3 });
+  practice.setNight(envCfg.tod === 'night');
+  korea?.setNight(envCfg.tod === 'night');
+  clouds.key = '';
+  // 관제
+  atc.enabled = envCfg.atc;
+  $('radio').hidden = true;
+  if (envCfg.atc) {
+    const start = mode === 'route' ? route.start : scenario.id;
+    const depAp = mode === 'route' ? AIRPORTS.find(a => a.icao === route.dep) : null;
+    const dstAp = mode === 'route' ? AIRPORTS.find(a => a.icao === route.dest) : null;
+    const wxEn = () => weather.spd < 1 ? 'calm' : `${String(Math.round(weather.dir / 10) * 10 || 360).padStart(3, '0')} at ${Math.round(weather.spd)}${weather.gust ? ` gusting ${Math.round(weather.spd + weather.gust)}` : ''}`;
+    atc.start({
+      cs: envCfg.cs, dep: mode === 'route' ? route.dep : 'TRNG', dest: mode === 'route' ? route.dest : 'TRNG',
+      depRwy: mode === 'route' ? route.depRwy : '33L', destRwy: mode === 'route' ? route.destRwy : '33L', start,
+      cruiseFt: Math.round((ap.plan ? ap.plan.cruiseAlt / FT : 5000) / 100) * 100,
+      iafFt: Math.round((ap.plan ? ap.plan.iafAlt / FT : 3000) / 100) * 100,
+      depElevFt: depAp ? depAp.elevFt : 0, destElevFt: dstAp ? dstAp.elevFt : 0,
+      wxText: () => weather.atis(), wxEn,
+    });
+  }
+  // 고장
+  ac.fail = { eng: [false, false], gear: false, flaps: false };
+  ac.ctl.gravityGear = false;
+  failures.reset(envCfg.fail);
+  $('ecam').hidden = true;
+}
+let radioTimer = null;
+function showRadio(m) {
+  $('radioFrom').textContent = '📻 ' + m.from;
+  $('radioKo').textContent = m.ko;
+  $('radioEn').textContent = m.en + (m.readEn ? `  ↳ ${m.readEn}` : '');
+  $('radio').hidden = false;
+  clearTimeout(radioTimer); radioTimer = setTimeout(() => { $('radio').hidden = true; }, 11000);
+}
+function showEcam(f) {
+  $('ecamTitle').textContent = '⚠ ' + f.title;
+  $('ecamSteps').innerHTML = f.steps.map(x => `<li>${x}</li>`).join('');
+  $('ecam').className = f.level === 'amber' ? 'amber' : '';
+  $('ecam').hidden = false;
+  audio.warn('FAIL', f.level === 'red' ? 'engine failure' : 'caution', 1);
+  for (let i = 0; i < 3; i++) setTimeout(() => audio.beep(f.level === 'red' ? 1000 : 700, 0.2), i * 300);
+  if (timeScale > 1) { timeScale = 1; }
+  monitor?.add('flight', `고장 발생: ${f.title.split(' · ')[1] || f.title}`, 0);
+  clPanel.visible = false; $('clPanel').hidden = true;
+}
+$('ecamOk').onclick = () => { $('ecam').hidden = true; };
+function windInfo() {
+  const w = ac.wind;
+  const spd = Math.hypot(w.x, w.z) / KT;
+  if (spd < 1) return null;
+  const toGrid = Math.atan2(w.x, -w.z) / DEG;
+  const fromMag = (toGrid + 180 + (ac.hdgOffset || 0) + 720) % 360;
+  return { dir: fromMag, spd };
 }

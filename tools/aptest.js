@@ -135,6 +135,58 @@ console.log('\n=== 2b. 복행(TOGA) 후 재접근 · 오토브레이크 MED 착�
   check('오토브레이크 MED 정지 (접지 후 700~1500m)', stopU - tdu > 700 && stopU - tdu < 1500, (stopU - tdu).toFixed(0) + 'm');
 }
 
+/* 2c. 날씨 · 고장 */
+console.log('\n=== 2c. 측풍 15kt(돌풍) 자동착륙 · 엔진 고장 이륙 · 기어 비상 내림 ===');
+{
+  const { Weather, WX_PRESETS } = await import('../js/sim/weather.js');
+  const rwy = makeRunway({ x: 0, z: 0, hdg: 330, length: 3750, width: 60, names: ['33L', '15R'] });
+  const end = rwy.ends[0];
+  const wx = new Weather(); wx.set(WX_PRESETS.cross); wx.resolve(330);
+  const ac = new Aircraft(); const ap = new Autopilot(ac);
+  const p = end.thr.clone().addScaledVector(end.dir, -6 * NM);
+  ac.placeInAir(p.x, Math.tan(3 * DEG) * 6 * NM + 15 + 2.9, p.z, 330, ac.speeds().vapp, -3, 4, true);
+  ac.ctl.lever = 0.5; ap.toggleATHR(); ap.toggleAP(); ap.app = { rwy, end }; ap.setLat('LOC'); ap.setVert('G/S');
+  ac.ctl.autobrake = 2;
+  let maxCrab = 0;
+  run(ac, ap, 300, Object.assign((a) => {
+    a.wind = wx.sample(DT, a.altFt, Math.max(0, a.ra), 0);
+    if (a.raFt > 300) maxCrab = Math.max(maxCrab, Math.abs(wrap180(a.heading - 330)));
+  }, { done: (a) => a.wow && a.gs < 2 }), 0);
+  const td = ac.touchdown, l = td && rwy.local(end, td.pos);
+  console.log('crosswind', { crab: maxCrab.toFixed(1), fpm: td && td.fpm.toFixed(0), v: l && l.v.toFixed(1), hdgAtTd: td && wrap180(td.heading - 330).toFixed(1) });
+  check('측풍 중 크랩 각도 발생 (> 3°)', maxCrab > 3, maxCrab.toFixed(1) + '°');
+  check('측풍 자동착륙 성공 (중심선 ±15m)', !!td && !ac.crashed && Math.abs(l.v) < 15, l && `v=${l.v.toFixed(1)}m`);
+  check('접지 시 디크랩 (기수 정렬 < 4°)', td && Math.abs(wrap180(td.heading - 330)) < 4, td && wrap180(td.heading - 330).toFixed(1));
+
+  // 엔진 고장: VR 직전 오른쪽 엔진 정지 → 이륙 계속
+  const ac2 = new Aircraft(); const ap2 = new Autopilot(ac2);
+  ac2.placeOnGround(end.thr.x, end.thr.z, 330); ac2.ctl.parking = false; ac2.ctl.lever = 1;
+  const sp = ac2.speeds();
+  let failed = false, maxDev = 0;
+  run(ac2, ap2, 260, Object.assign((a) => {
+    if (!failed && a.ias > sp.v1) { failed = true; a.fail.eng[1] = true; }
+    if (a.ias > sp.vr) a.ctl.pitch = a.wow ? 0.6 : Math.max(-0.4, Math.min(0.4, (12 - a.pitch) * 0.08));
+    // 조종사 러더: 기수 방향을 활주로에 유지
+    a.ctl.rudder = Math.max(-1, Math.min(1, wrap180(330 - a.heading) * 0.4 - (-a.w.y / DEG) * 0.3));
+    a.ctl.roll = Math.max(-1, Math.min(1, -a.bank * 0.05));
+    if (!a.wow && a.raFt > 50) a.ctl.gearDown = false;
+    if (a.wow) maxDev = Math.max(maxDev, Math.abs(rwy.local(end, a.pos).v));
+  }, { done: (a) => a.altFt > 1500 }), 0);
+  check('엔진 1개로 이륙 · 1500ft 상승', !ac2.crashed && ac2.altFt > 1400, ac2.altFt.toFixed(0) + 'ft');
+  check('지상 활주 중 중심선 유지 (< 15m)', maxDev < 15, maxDev.toFixed(1) + 'm');
+
+  // 기어 고장: 정상 내림 불가 → 중력 비상 내림
+  const ac3 = new Aircraft();
+  ac3.placeInAir(0, 3000 * FT, 0, 330, 200, 0, 2, false);
+  ac3.fail.gear = true; ac3.ctl.gearDown = true;
+  for (let i = 0; i < 120 * 15; i++) ac3.step(DT);
+  const stuck = ac3.gearPos < 0.02;
+  ac3.ctl.gravityGear = true;
+  for (let i = 0; i < 120 * 30; i++) ac3.step(DT);
+  check('기어 고장 시 정상 내림 안 됨', stuck);
+  check('중력 비상 내림으로 기어 내려옴', ac3.gearPos > 0.98, ac3.gearPos.toFixed(2));
+}
+
 /* 3. 실제 노선 (지형 포함): RKSI 33L → RKPK 36L */
 if (process.argv.includes('--route')) {
   console.log('\n=== 3. 노선 비행 RKSI 33L → RKPK 36L (FMS · AP · 자동착륙) ===');
@@ -178,6 +230,11 @@ if (process.argv.includes('--route')) {
   const plan = new FlightPlan(world, { start: { x: p0.x, z: p0.z, alt: dep.end.thr.y }, depEnd: dep.end, end: dst.end, destName: 'RKPK' });
   console.log('plan', plan.wps.map(w => `${w.name}${w.alt ? '@' + Math.round(w.alt / FT) : ''}`).join(' → '), 'cruise', Math.round(plan.cruiseAlt / FT), 'total', (plan.totalToRwy / NM).toFixed(0) + 'NM');
   ap.plan = plan; ap.app = dst; ap.fcu.alt = Math.round(plan.cruiseAlt / FT / 100) * 100;
+  const { ATC } = await import('../js/ops/atc.js');
+  const msgs = [], devs = [];
+  const atc = new ATC({ say: null, onMsg: (m) => msgs.push(m), onDeviation: (t) => devs.push(t) });
+  atc.start({ cs: 'KFS101', dep: 'RKSI', dest: 'RKPK', depRwy: '33L', destRwy: '36L', start: 'takeoff', cruiseFt: Math.round(plan.cruiseAlt / FT / 100) * 100,
+    iafFt: Math.round(plan.iafAlt / FT / 100) * 100, depElevFt: 23, destElevFt: 6, wxText: () => '바람 고요', wxEn: () => 'calm' });
   ap.speeds = ac.speeds();
   let phase = 'to', desStarted = false, maxXte = 0;
   const ok = run(ac, ap, 3600 * 1.2, Object.assign((a, A, t) => {
@@ -197,7 +254,12 @@ if (process.argv.includes('--route')) {
     if (d < 8 && a.ctl.flapLever < 3) a.ctl.flapLever = 3;
     if (d < 6.5 && a.ctl.flapLever < 4) a.ctl.flapLever = 4;
     if (a.wow && phase === 'air') a.ctl.brake = a.wowTime > 3 ? 0.5 : 0;
+    atc.update(DT, a, A, a.wow ? (a.airTime ? 'ROLLOUT' : 'PREFLIGHT') : 'CRUISE', A.lastGuide, plan);
   }, { done: (a) => a.wow && a.gs < 20 * KT && a.time > 300 }), 180);
+  for (let i = 0; i < 120 * 20; i++) atc.update(DT, ac, ap, 'ROLLOUT', ap.lastGuide, plan);
+  console.log('ATC', msgs.map(m => m.from.split(' ')[0] + ':' + m.en.slice(8, 48)).join(' | '));
+  check('관제 교신 전 과정 (이륙 허가 ~ 착륙 허가 · 활주로 이탈)', atc.takeoffCleared && atc.landCleared && msgs.length >= 9, msgs.length + '건');
+  check('관제 지시 고도 이탈 없음 (자동비행)', devs.length === 0, devs.join(','));
   const td = ac.touchdown;
   const l = td ? dst.rwy.local(dst.end, td.pos) : null;
   console.log('touchdown', td && { fpm: td.fpm.toFixed(0), u: l.u.toFixed(0), v: l.v.toFixed(1), min: (td.time / 60).toFixed(1) });

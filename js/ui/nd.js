@@ -171,8 +171,19 @@ export function drawND(g, x, y, S, ac, ctx) {
   g.textAlign = 'left'; g.font = `${Math.round(S * 0.042)}px monospace`;
   g.fillStyle = '#fff';
   g.fillText(`GS${String(Math.round(ac.gs / KT)).padStart(4)} TAS${String(Math.round(ac.tas / KT)).padStart(4)}`, x + 6, y + 14);
+  if (ctx.wind) {
+    const wd = ctx.wind;
+    g.fillStyle = '#fff';
+    g.fillText(`${String(Math.round(wd.dir)).padStart(3, '0')}°/${Math.round(wd.spd)}`, x + 6, y + 32);
+    // 바람 화살표 (바람이 불어가는 방향)
+    const a = (wd.dir + 180 - hdgM) * DEG;
+    const ax = x + 22, ay = y + 56, L = 12;
+    g.strokeStyle = '#3ce36b'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(ax - Math.sin(a) * L, ay + Math.cos(a) * L); g.lineTo(ax + Math.sin(a) * L, ay - Math.cos(a) * L); g.stroke();
+    g.beginPath(); g.arc(ax + Math.sin(a) * L, ay - Math.cos(a) * L, 3, 0, Math.PI * 2); g.fillStyle = '#3ce36b'; g.fill();
+  }
   if (ap && ap.app && (ap.armed.loc || ap.armed.gs || (ap.lat || '').startsWith('LOC') || ap.lat === 'LAND')) {
-    g.fillStyle = '#ff4fe0'; g.fillText(`ILS ${ap.app.end.name}`, x + 6, y + 32);
+    g.fillStyle = '#ff4fe0'; g.fillText(`ILS ${ap.app.end.name}`, x + 6, y + (ctx.wind ? 84 : 32));
   }
   if (toInfo) {
     g.textAlign = 'right';

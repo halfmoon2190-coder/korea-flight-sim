@@ -59,8 +59,11 @@ export async function createKoreaWorld(scene, quality, onProgress) {
   }
   onProgress?.(0.8);
 
-  // ── 도시 건물 ──
-  group.add(buildCities(terrain, quality));
+  // ── 도시 건물 · 야간 불빛 ──
+  const cities = buildCities(terrain, quality);
+  group.add(cities.group);
+  cities.lights.visible = false;
+  group.add(cities.lights);
   onProgress?.(0.9);
 
   return {
@@ -74,6 +77,7 @@ export async function createKoreaWorld(scene, quality, onProgress) {
       return best;
     },
     prime(camPos) { tr.prime(camPos); },
+    setNight(on) { cities.lights.visible = on; },
     update(camPos, acPos) {
       tr.update(camPos);
       for (const r of runways) {
@@ -153,6 +157,8 @@ function buildCities(terrain, quality) {
   const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
   const rnd = mulberry(42);
   const m = new THREE.Matrix4(), col = new THREE.Color();
+  const lp = [], lc = [];
+  const warm = [new THREE.Color(1.0, 0.82, 0.5), new THREE.Color(1.0, 0.95, 0.85), new THREE.Color(1.0, 0.7, 0.35)];
   for (const ct of CITIES) {
     const n = Math.round(Math.min(4000, ct.r * ct.r / 1e6 * 22 * dens));
     const inst = new THREE.InstancedMesh(box, mat, n);
@@ -174,10 +180,20 @@ function buildCities(terrain, quality) {
       const s = 0.65 + rnd() * 0.35;
       inst.setColorAt(k, col.setRGB(s, s * (0.96 + rnd() * 0.04), s * (0.9 + rnd() * 0.1)));
       k++;
+      // 야간 불빛 (건물마다 1~3개)
+      for (let q = 0; q < 1 + (tall ? 2 : 0); q++) {
+        lp.push(x + (rnd() - 0.5) * 60, h0 + 2 + rnd() * hh * 0.8, z + (rnd() - 0.5) * 60);
+        const wc = warm[(rnd() * 3) | 0]; lc.push(wc.r, wc.g, wc.b);
+      }
     }
     inst.count = k;
     inst.computeBoundingSphere();
     g.add(inst);
   }
-  return g;
+  const lg = new THREE.BufferGeometry();
+  lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3));
+  lg.setAttribute('color', new THREE.Float32BufferAttribute(lc, 3));
+  const lights = new THREE.Points(lg, new THREE.PointsMaterial({ size: 2.2, sizeAttenuation: false, vertexColors: true, fog: true }));
+  lights.frustumCulled = false;
+  return { group: g, lights };
 }

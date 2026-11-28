@@ -405,7 +405,7 @@ export class Instruments {
     const gr = Math.min(H * 0.15, W * 0.15);
     for (let i = 0; i < 2; i++) {
       const gx = x + W * (0.19 + i * 0.36), gy = y + H * 0.22;
-      this.drawN1(g, gx, gy, gr, ac, fs);
+      this.drawN1(g, gx, gy, gr, ac, fs, i);
     }
     // 추력 레버 표시
     this.drawLever(g, x + W * 0.86, y + H * 0.06, W * 0.1, H * 0.48, ac, fs);
@@ -471,7 +471,9 @@ export class Instruments {
     g.fillText(`THS ${(ac.ths / DEG).toFixed(1)}°`, x + W * 0.7, by2);
   }
 
-  drawN1(g, cx, cy, r, ac, fs) {
+  drawN1(g, cx, cy, r, ac, fs, e = 0) {
+    const n1 = ac.n1s ? ac.n1s[e] : ac.n1;
+    const failed = ac.fail && ac.fail.eng[e];
     const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
     const ang = (v) => a0 + (a1 - a0) * clamp(v / 110, 0, 1);
     g.lineWidth = 3; g.strokeStyle = '#555';
@@ -482,8 +484,8 @@ export class Instruments {
       const a = ang(v); g.beginPath(); g.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); g.lineTo(cx + Math.cos(a) * (r - (v % 50 ? 4 : 8)), cy + Math.sin(a) * (r - (v % 50 ? 4 : 8))); g.stroke();
     }
     // 바늘
-    const a = ang(ac.n1);
-    g.strokeStyle = C.green; g.lineWidth = 3;
+    const a = ang(n1);
+    g.strokeStyle = failed ? C.amber : C.green; g.lineWidth = 3;
     g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * r * 0.95, cy + Math.sin(a) * r * 0.95); g.stroke();
     // 레버 목표 (청록 원)
     const tgt = ac.ctl.rev ? 21 + ac.ctl.revAmt * 51 : (ac.ctl.lever === 0 ? (ac.wow ? 21 : 27) : null);
@@ -496,7 +498,8 @@ export class Instruments {
     g.strokeStyle = C.cyan; g.lineWidth = 2;
     g.beginPath(); g.arc(cx + Math.cos(ta) * (r + 6), cy + Math.sin(ta) * (r + 6), 3.5, 0, Math.PI * 2); g.stroke();
     g.fillStyle = C.green; g.font = `bold ${Math.round(fs * 1.15)}px monospace`; g.textAlign = 'center';
-    g.fillText(ac.n1.toFixed(1), cx + r * 0.25, cy + r * 0.55);
+    if (failed) { g.fillStyle = C.amber; g.fillText('FAIL', cx + r * 0.25, cy + r * 0.55); }
+    else g.fillText(n1.toFixed(1), cx + r * 0.25, cy + r * 0.55);
     g.fillStyle = C.white; g.font = `${Math.round(fs * 0.8)}px monospace`;
     g.fillText(ac.ctl.rev ? 'REV' : 'N1 %', cx - r * 0.1, cy - r * 0.3);
   }

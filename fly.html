@@ -20,6 +20,8 @@
   <span id="fps"></span>
 </div>
 <div id="warnings"></div>
+<div id="radio" hidden><div id="radioFrom"></div><div id="radioKo"></div><div id="radioEn" class="muted small"></div></div>
+<div id="ecam" hidden><div id="ecamTitle"></div><ol id="ecamSteps"></ol><button id="ecamOk" class="ghost">확인 (창 닫기)</button></div>
 <canvas id="minimap" hidden></canvas>
 <!-- FCU: 자동비행 조작 패널 (마우스 클릭 · 휠) -->
 <div id="fcu" hidden>
@@ -102,6 +104,26 @@
       <label title="계획 경로를 따라 하늘에 고리를 표시합니다"><input type="checkbox" id="optGuide"> 3D 경로 링</label>
       <label title="PFD 위 초록색 비행지시 막대"><input type="checkbox" id="optFd" checked> 비행지시기(FD)</label>
     </div>
+    <details id="envBox" class="env-box">
+      <summary>🌦 환경 · 훈련 설정 <span id="envSum" class="muted small"></span></summary>
+      <div class="env-grid">
+        <label>날씨 <select id="wxPreset"></select></label>
+        <label>시간대 <select id="tod"><option value="day">낮</option><option value="dawn">새벽</option><option value="dusk">석양</option><option value="night">밤</option></select></label>
+        <label>고장 훈련 <select id="failSel"></select></label>
+        <label><input type="checkbox" id="atcOn"> 관제(ATC) 무전</label>
+        <label>호출부호 <input type="text" id="callsign" maxlength="8" size="8"></label>
+      </div>
+      <div id="wxCustom" class="env-grid" hidden>
+        <label>풍향(°) <input type="number" id="wDir" min="0" max="360" step="10"></label>
+        <label>풍속(kt) <input type="number" id="wSpd" min="0" max="60" step="1"></label>
+        <label>돌풍(+kt) <input type="number" id="wGust" min="0" max="30" step="1"></label>
+        <label>난기류 <select id="wTurb"><option value="0">없음</option><option value="0.25">약</option><option value="0.5">중</option><option value="0.9">강</option></select></label>
+        <label>시정 <select id="wVis"><option value="40000">40km 이상</option><option value="10000">10km</option><option value="5000">5km</option><option value="2000">2km</option><option value="800">800m</option><option value="400">400m</option></select></label>
+        <label>구름 밑(ft) <input type="number" id="wBase" min="200" max="20000" step="100"></label>
+        <label>운량 <select id="wCover"><option value="0">없음</option><option value="0.3">조금</option><option value="0.6">많음</option><option value="0.95">흐림</option></select></label>
+      </div>
+      <p class="muted small">측풍 착륙: Z/X(러더)로 접지 직전 기수를 활주로에 맞추세요. 저시정에서는 ILS 자동착륙(APPR)을 활용하세요.</p>
+    </details>
     <div id="speedsInfo" class="speeds"></div>
     <div class="row">
       <button id="startBtn" class="primary big">비행 시작</button>
@@ -166,6 +188,7 @@
           <tr><td>, / .</td><td>ND(항법화면) 범위 축소 / 확대</td></tr>
           <tr><td>K</td><td>오토브레이크 (끔 → LO → MED → MAX)</td></tr>
           <tr><td>C</td><td>체크리스트 창</td></tr>
+          <tr><td>Shift + G</td><td>랜딩기어 중력 비상 내림 (기어 고장 시)</td></tr>
           <tr><td>= / -</td><td>시간 가속 ×2 · ×4 · ×8 / 감속 (순항 중)</td></tr>
         </table>
         <h3>조이스틱 (기본 배정)</h3>
@@ -214,6 +237,14 @@
           <li><b>K 키</b> 오토브레이크: 이륙 전 MAX, 착륙 전 LO/MED. 착륙 후 자동 제동 → 정지까지.</li>
           <li><b>안정 접근</b>: 1000ft·500ft에서 기어·플랩 FULL·VAPP·강하율 1000fpm 이하·경로 정렬을 평가합니다. 불안정하면 <b>4(TOGA)로 복행</b>하세요.</li>
           <li>정지하면 <b>운항 평가서</b>가 나오고 <b>📒 비행 기록부</b>에 저장됩니다 (CSV로 엑셀 저장 가능).</li>
+        </ol>
+        <h3>날씨 · 야간 · 관제 · 고장 (5단계)</h3>
+        <ol class="tips">
+          <li>메뉴의 <b>🌦 환경 · 훈련 설정</b>에서 날씨 · 시간대 · 관제 · 고장 훈련을 고릅니다 (모두 기본은 끔).</li>
+          <li><b>바람</b>: ND 왼쪽 위에 풍향/풍속 화살표. 측풍이면 기수를 바람 쪽으로 틀고(크랩) 날아가다가, 접지 직전 러더로 기수를 활주로에 맞춥니다.</li>
+          <li><b>저시정·구름</b>: 바깥이 안 보이면 계기(PFD 활공경로 다이아몬드)를 믿고, 가능하면 APPR 자동착륙.</li>
+          <li><b>관제</b>: 화면 아래쪽 무전 자막. 이륙·착륙 허가와 상승·강하 지시가 나오며, 지시 고도를 30초 넘게 벗어나면 감점.</li>
+          <li><b>고장</b>: 빨강/주황 ECAM 창의 절차를 따르세요. 엔진 고장은 러더로 방향 유지, 기어 고장은 Shift+G.</li>
         </ol>
         <h3>노선 비행 요령</h3>
         <ol class="tips">

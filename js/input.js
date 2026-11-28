@@ -81,6 +81,7 @@ export class Input {
       Equal: 'timeUp', NumpadAdd: 'timeUp', Minus: 'timeDown', NumpadSubtract: 'timeDown',
     };
     if (code === 'KeyB' && shift) return this.emit('action', 'parking');
+    if (code === 'KeyG' && shift) return this.emit('action', 'gravityGear');
     if (code === 'KeyA') return this.emit('action', shift ? 'athr' : 'ap');
     if (code === 'KeyL') return this.emit('action', shift ? 'appr' : 'loc');
     if (code === 'KeyD') return this.emit('action', 'fd');

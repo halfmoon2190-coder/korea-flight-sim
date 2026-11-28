@@ -20,6 +20,7 @@ export class Autopilot {
     this.thrMode = 'MAN THR'; this.msg = ''; this.events = [];
     this.floor = 0;
     this.speeds = null;
+    this.failed = false;
   }
 
   /* ───────── FCU 조작 ───────── */
@@ -52,6 +53,7 @@ export class Autopilot {
   pushVs() { this.fcu.vs = 0; this.setVert('V/S'); }
   toggleAP() {
     if (this.ap) return this.disconnect('AP 해제');
+    if (this.failed) return this.say('자동비행 고장 — AP를 사용할 수 없습니다');
     if (this.ac.wow) return this.say('지상에서는 AP를 켤 수 없습니다 (이륙 후 100ft 이상)');
     if (this.ac.raFt < 100) return this.say('100ft 이상에서 AP를 켤 수 있습니다');
     this.ap = true;
@@ -66,6 +68,7 @@ export class Autopilot {
     this.say(msg);
   }
   toggleATHR() {
+    if (this.failed) { this.say('자동비행 고장 — A/THR을 사용할 수 없습니다'); return; }
     if (this.athr || this.athrArmed) { this.athr = false; this.athrArmed = false; this.events.push('athr_off'); return; }
     this.athr = true;
     this.n1Trim = this.ac.n1;
@@ -298,7 +301,9 @@ export class Autopilot {
     this.cmd.pitch = pitch; this.cmd.roll = roll;
     if (this.ap) {
       c.pitch = pitch; c.roll = roll;
-      if (this.lat === 'ROLL OUT' && loc) c.rudder = clamp(-(loc.v * 0.025 + (this.vdot || 0) * 0.3), -0.4, 0.4);
+      if (this.lat === 'ROLL OUT' && loc) c.rudder = clamp(-(loc.v * 0.025 + (this.vdot || 0) * 0.3) + wrap180(loc.end.hdg - ac.heading) * 0.06, -0.6, 0.6);
+      else if (this.vert === 'FLARE' && loc && ac.raFt < 25) c.rudder = clamp(wrap180(loc.end.hdg - ac.heading) * 0.15, -1, 1);   // 디크랩: 접지 직전 기수를 활주로에 정렬
+      else c.rudder = 0;
     }
   }
 

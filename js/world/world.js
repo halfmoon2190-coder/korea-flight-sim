@@ -45,15 +45,54 @@ export function createEnvironment(scene, quality) {
     sun.shadow.normalBias = 0.05;
   }
   const sunDir = sun.position.clone().normalize();
+  // 시간대별 조명 · 하늘색
+  const TIMES = {
+    day:   { top: 0x3d7fd6, hor: 0xc4dcef, sunC: 0xfff3dd, sunI: 2.1, hemiI: 1.15, hemiSky: 0xdfeeff, hemiGnd: 0x5d6b45, el: 50, az: 220 },
+    dawn:  { top: 0x40609e, hor: 0xf0b9a0, sunC: 0xffc89a, sunI: 1.25, hemiI: 0.7, hemiSky: 0xc8b8d8, hemiGnd: 0x4a4a40, el: 7, az: 95 },
+    dusk:  { top: 0x34508e, hor: 0xf3a86b, sunC: 0xffa060, sunI: 1.15, hemiI: 0.65, hemiSky: 0xd8b0a0, hemiGnd: 0x4a4038, el: 6, az: 265 },
+    night: { top: 0x040915, hor: 0x0c1730, sunC: 0x8fa6d8, sunI: 0.22, hemiI: 0.16, hemiSky: 0x506080, hemiGnd: 0x101418, el: 40, az: 150 },
+  };
+  const cond = { time: 'day', vis: 40000, overcast: 0, inCloud: false };
+  const baseTop = new THREE.Color(), baseHor = new THREE.Color();
+  function applyLook() {
+    const t = TIMES[cond.time];
+    baseTop.set(t.top); baseHor.set(t.hor);
+    const gray = new THREE.Color(cond.time === 'night' ? 0x0d1015 : 0x9aa3ab);
+    const ov = Math.min(1, cond.overcast);
+    SKY_TOP.copy(baseTop).lerp(gray, ov * 0.85);
+    SKY_HORIZON.copy(baseHor).lerp(gray, ov * 0.7);
+    if (cond.vis < 5000) SKY_HORIZON.lerp(gray, 0.8);
+    scene.fog.color.copy(SKY_HORIZON); scene.background.copy(SKY_HORIZON);
+    sun.color.set(t.sunC); sun.intensity = t.sunI * (1 - ov * 0.55);
+    hemi.intensity = t.hemiI * (1 - ov * 0.2); hemi.color.set(t.hemiSky); hemi.groundColor.set(t.hemiGnd);
+    const el = t.el * Math.PI / 180, az = t.az * Math.PI / 180;
+    sunDir.set(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
+  }
   return {
-    sun, sky,
-    /** 시야: 고도가 높을수록 멀리 */
-    update(camera, acPos, baseFar) {
+    sun, sky, hemi,
+    get time() { return cond.time; },
+    setConditions({ time, vis, overcast }) {
+      if (time) cond.time = time;
+      if (vis !== undefined) cond.vis = vis;
+      if (overcast !== undefined) cond.overcast = overcast;
+      applyLook();
+    },
+    /** 시야: 고도가 높을수록 멀리, 날씨 시정 · 구름 속 반영 */
+    update(camera, acPos, baseFar, inCloud = false) {
       sky.position.copy(camera.position);
       sky.scale.setScalar(camera.far * 0.9);
-      const far = baseFar + Math.min(70000, Math.max(0, camera.position.y) * 6);
-      scene.fog.near = Math.max(1500, far * 0.08 + Math.max(0, camera.position.y) * 1.6);   // 고고도에서는 아래 지형이 덜 뿌옇게
+      let far = baseFar + Math.min(70000, Math.max(0, camera.position.y) * 6);
+      let near = Math.max(1500, far * 0.08 + Math.max(0, camera.position.y) * 1.6);   // 고고도에서는 아래 지형이 덜 뿌옇게
+      const lowAlt = camera.position.y < 3000;
+      if (cond.vis < far && lowAlt) { far = Math.max(250, cond.vis * 1.25); near = Math.max(10, cond.vis * 0.08); }
+      if (inCloud) { far = 220; near = 5; }
+      if (inCloud !== cond.inCloud) {
+        cond.inCloud = inCloud;
+        if (inCloud) { scene.fog.color.set(cond.time === 'night' ? 0x101418 : 0xd8dde2); SKY_TOP.copy(scene.fog.color); SKY_HORIZON.copy(scene.fog.color); scene.background.copy(scene.fog.color); } else applyLook();
+      }
+      scene.fog.near = near;
       scene.fog.far = far;
+      far = Math.max(far, 1500);
       if (Math.abs(camera.far - far * 1.15) > 500) { camera.far = far * 1.15; camera.updateProjectionMatrix(); }
       if (sun.castShadow) {
         sun.target.position.copy(acPos);
@@ -125,7 +164,14 @@ export function createPracticeWorld(scene, quality) {
   runways.forEach(r => group.add(r.group));
   const apron = buildApron(runways[0], q);
   group.add(apron);
-  group.add(buildTowns(q, rnd));
+  const towns = buildTowns(q, rnd);
+  group.add(towns);
+  // 야간 마을 불빛
+  const tl = [];
+  towns.children[0].count && (() => { const m = new THREE.Matrix4(), p = new THREE.Vector3(); for (let i = 0; i < towns.children[0].count; i++) { towns.children[0].getMatrixAt(i, m); p.setFromMatrixPosition(m); tl.push(p.x, 4, p.z); } })();
+  const townLights = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(tl, 3)),
+    new THREE.PointsMaterial({ size: 2.2, sizeAttenuation: false, color: 0xffd28a, fog: true }));
+  townLights.visible = false; group.add(townLights);
 
   return {
     kind: 'practice', group, runways,
@@ -133,6 +179,7 @@ export function createPracticeWorld(scene, quality) {
     groundAt: () => 0,
     isWater: () => false,
     hdgOffset: () => 0,
+    setNight(on) { townLights.visible = on; },
     towerFor: () => apron.userData.towerPos,
     update(camPos) { for (const r of runways) r.updatePapi(camPos); },
   };
