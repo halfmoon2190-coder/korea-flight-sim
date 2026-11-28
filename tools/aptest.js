@@ -106,6 +106,35 @@ console.log('\n=== 2. ILS 포착 + 자동착륙 (연습 공항 33L) ===');
   check('접지구역 150~900m', l && l.u > 150 && l.u < 900, l && l.u.toFixed(0));
 }
 
+/* 2b. 복행 + 오토브레이크 */
+console.log('\n=== 2b. 복행(TOGA) 후 재접근 · 오토브레이크 MED 착륙 ===');
+{
+  const rwy = makeRunway({ x: 0, z: 0, hdg: 330, length: 3750, width: 60, names: ['33L', '15R'] });
+  const end = rwy.ends[0];
+  const ac = new Aircraft(); const ap = new Autopilot(ac);
+  const p = end.thr.clone().addScaledVector(end.dir, -5 * NM);
+  ac.placeInAir(p.x, Math.tan(3 * DEG) * 5 * NM + 15 + 2.9, p.z, 330, ac.speeds().vapp, -3, 4, true);
+  ac.ctl.lever = 0.5; ap.toggleATHR(); ap.toggleAP(); ap.app = { rwy, end }; ap.setLat('LOC'); ap.setVert('G/S');
+  ap.fcu.alt = 3000;   // 실패접근 고도
+  let gaAt = null;
+  run(ac, ap, 200, Object.assign((a, A) => {
+    if (gaAt === null && a.raFt < 600) { gaAt = a.time; a.ctl.lever = 1; }
+    if (gaAt !== null && A.vert === 'SRS' && a.vs > 2 && a.ctl.gearDown && a.raFt > 300) { a.ctl.gearDown = false; a.ctl.flapLever = 3; }
+    if (gaAt !== null && a.raFt > 1500 && a.ctl.lever > 0.5) { a.ctl.lever = 0.5; a.ctl.flapLever = 1; }
+  }, { done: (a, A) => A.vert === 'ALT' }), 20);
+  check('복행 모드(SRS/GA TRK) 진입', ap.events.includes('go_around') || ap.vert === 'ALT', ap.vert + '|' + ap.lat);
+  check('복행 후 3000ft 수평', Math.abs(ac.altFt - 3000) < 100, ac.altFt.toFixed(0));
+  // 오토브레이크 착륙
+  const ac2 = new Aircraft(); const ap2 = new Autopilot(ac2);
+  const p2 = end.thr.clone().addScaledVector(end.dir, -3 * NM);
+  ac2.placeInAir(p2.x, Math.tan(3 * DEG) * 3 * NM + 15 + 2.9, p2.z, 330, ac2.speeds().vapp, -3, 4, true);
+  ac2.ctl.lever = 0.5; ap2.toggleATHR(); ap2.toggleAP(); ap2.app = { rwy, end }; ap2.setLat('LOC'); ap2.setVert('G/S');
+  ac2.ctl.autobrake = 2;
+  run(ac2, ap2, 240, Object.assign(() => {}, { done: (a) => a.wow && a.gs < 1 }), 0);
+  const tdu = rwy.local(end, ac2.touchdown.pos).u, stopU = rwy.local(end, ac2.pos).u;
+  check('오토브레이크 MED 정지 (접지 후 700~1500m)', stopU - tdu > 700 && stopU - tdu < 1500, (stopU - tdu).toFixed(0) + 'm');
+}
+
 /* 3. 실제 노선 (지형 포함): RKSI 33L → RKPK 36L */
 if (process.argv.includes('--route')) {
   console.log('\n=== 3. 노선 비행 RKSI 33L → RKPK 36L (FMS · AP · 자동착륙) ===');

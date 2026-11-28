@@ -95,7 +95,7 @@ export class Autopilot {
   speedTarget() {
     const ac = this.ac, sp = this.speeds || ac.speeds();
     if (!this.fcu.spdMan) return this.fcu.spd;
-    if (this.vert === 'SRS') return sp.v2 + 10;
+    if (this.vert === 'SRS') return this.ga ? this.gaSpd : sp.v2 + 10;
     const lever = ac.ctl.flapLever;
     const near = this.plan && this.lastGuide && this.lastGuide.toRwy < 22 * NM;
     if (lever >= 4) return sp.vapp;
@@ -131,6 +131,19 @@ export class Autopilot {
         if (this.plan) this.armed.nav = true;
       } else if (lev < 0.2 && ac.gs < 30 * KT && this.vert === 'SRS') { this.vert = null; this.lat = null; }
     }
+    // 복행 (Go-around): 접근 중 추력 레버 TOGA
+    const inApp = ['G/S', 'G/S*', 'LAND', 'FLARE'].includes(this.vert) ||
+      (c.flapLever >= 1 && ac.raFt < 2500 && this.lastGuide && this.lastGuide.toRwy < 15 * NM);
+    if (!ac.wow && lev > 0.99 && this.vert !== 'SRS' && inApp && ac.airTime > 10) {
+      this.setVert('SRS'); this.ga = true; this.gaSpd = Math.round(Math.max(sp.vapp, ac.ias));
+      this.setLat('GA TRK'); this.trkHold = ac.track;
+      this.armed = { nav: false, loc: false, gs: false };
+      if (this.athr) { this.athr = false; this.athrArmed = true; }
+      const elevFt = this.app ? this.app.end.thr.y / FT : 0;
+      this.fcu.alt = Math.max(this.fcu.alt, Math.round((elevFt + 3000) / 100) * 100);
+      this.events.push('go_around');
+    }
+    if (this.vert !== 'SRS') this.ga = false;
     // 이륙 후 모드 전환
     if (!ac.wow && this.lat === 'RWY' && ac.raFt > 30) {
       if (this.armed.nav && this.plan) { this.setLat('NAV'); this.armed.nav = false; }
@@ -148,8 +161,8 @@ export class Autopilot {
     const climbing = ['CLB', 'OP CLB', 'SRS'].includes(this.vert) || (this.vert === 'V/S' && this.fcu.vs > 0);
     const descending = ['DES', 'OP DES'].includes(this.vert) || (this.vert === 'V/S' && this.fcu.vs < 0);
     const capDist = Math.max(120, Math.abs(vsFpm) * 0.13);
-    if (((climbing && dh > 0) || (descending && dh < 0)) && Math.abs(dh) < capDist && this.vert !== 'SRS') this.setVert('ALT*');
-    if (climbing && dh < 0 && this.vert !== 'SRS') this.setVert('ALT*');
+    if (((climbing && dh > 0) || (descending && dh < 0)) && Math.abs(dh) < capDist && !(this.vert === 'SRS' && ac.raFt < 400)) this.setVert('ALT*');
+    if (climbing && dh < 0 && !(this.vert === 'SRS' && ac.raFt < 400)) this.setVert('ALT*');
     if (descending && dh > 0) this.setVert('ALT*');
     if (this.vert === 'ALT*' && Math.abs(dh) < 25 && Math.abs(vsFpm) < 200) this.setVert('ALT');
 
@@ -199,7 +212,7 @@ export class Autopilot {
         const err = wrap180(this.dispHdgToGrid(this.fcu.hdg) - ac.heading);
         phiC = clamp(err * 1.8, -bankLim, bankLim); break;
       }
-      case 'RWY TRK': trkT = this.trkHold; break;
+      case 'RWY TRK': case 'GA TRK': trkT = this.trkHold; break;
       case 'NAV': if (guide) trkT = wrap360(guide.crs + clamp(-guide.xte * 0.006, -45, 45)); break;
       case 'LOC*': case 'LOC': case 'LAND':
         if (loc) trkT = wrap360(loc.end.hdg + clamp(-loc.v * 0.06 - (this.vdot || 0) * 1.1, -30, 30));
@@ -274,7 +287,8 @@ export class Autopilot {
     if (athrActive) this.thrMode = mode === 'SPEED' && ac.mach > 0.6 && !this.fcu.spdMan ? 'MACH' : mode;
     else {
       const L = lev;
-      this.thrMode = c.rev ? 'REV' : L > 0.99 ? 'MAN TOGA' : Math.abs(L - AC.detents.MCT) < 0.01 ? (ac.wow ? 'MAN FLX' : 'MAN MCT') : L < 0.01 ? 'IDLE' : 'MAN THR';
+      const flx = ac.flexTemp && (ac.wow || ac.flexLatched);
+      this.thrMode = c.rev ? 'REV' : L > 0.99 ? 'MAN TOGA' : Math.abs(L - AC.detents.MCT) < 0.01 ? (flx ? `MAN FLX ${ac.flexTemp}` : 'MAN MCT') : L < 0.01 ? 'IDLE' : 'MAN THR';
       if (this.athr && !athrActive && L > 0.01 && L < AC.detents.CL) this.thrMode = 'THR LVR';
     }
     if (ac.wow && this.athr && this.vert === null && ac.gs < 50 * KT) { /* 착륙 후 */ this.athr = false; }

@@ -5,7 +5,7 @@
 //   기체(로컬): x = 오른쪽 날개, y = 위, z = 꼬리 쪽 (기수 = -z)
 //   각속도 로컬 벡터 w = (q, -r, -p)   p: 롤(오른쪽 날개 내림 +), q: 피치(기수 올림 +), r: 요(기수 오른쪽 +)
 import { Vector3, Quaternion, Euler } from '../../vendor/three.module.min.js';
-import { AC, flapParams, flapLabel, vfeOf, leverToN1, n1ToLever, n1ToThrustFrac, thrustFracToN1, thrustLapse } from './a320.js';
+import { AC, flapParams, flapLabel, vfeOf, leverToN1, n1ToLever, n1ToThrustFrac, thrustFracToN1, thrustLapse, flexN1 } from './a320.js';
 import { G, KT, FT, DEG, isa, clamp, approach, wrap360 } from './atmo.js';
 
 const _v = new Vector3(), _v2 = new Vector3(), _v3 = new Vector3();
@@ -35,6 +35,7 @@ export class Aircraft {
       flapLever: 0, gearDown: true,
       sbLever: 0, sbArmed: false,       // 스피드브레이크, 지상 스포일러 ARM
       brake: 0, parking: false,
+      autobrake: 0,                     // 0 끔, 1 LO, 2 MED, 3 MAX(RTO)
     };
     this.n1 = AC.n1IdleGround;
     this.flapPos = 0; this.is1F = false;
@@ -44,6 +45,7 @@ export class Aircraft {
     this.law = 'GROUND'; this.lawTime = 0;
     this.phiHold = 0; this.thMem = 0;
     this.wow = true; this.wowTime = 10; this.airTime = 0; this.gsDeployed = false; this.revPos = 0;
+    this.flexLatched = false; this.abActive = false; this.abBrake = 0; this._lastGs = undefined;
     this.crashed = null; this.tailStrike = false;
     this.nz = 1; this.peakG = 1;
     this.time = 0;
@@ -155,6 +157,22 @@ export class Aircraft {
     if (c.lever > 0.1 && !c.rev) this.gsDeployed = false;
     if (!this.wow && this.airTime > 1) this.gsDeployed = false;
     this.gsPos = approach(this.gsPos, this.gsDeployed ? 1 : 0, 2.5, dt);
+    // 오토브레이크: 지상 스포일러가 펼쳐지면 목표 감속도로 제동, 페달 브레이크를 밟으면 해제
+    const gsNow = this.gs || 0;
+    const decel = this._lastGs !== undefined ? (this._lastGs - gsNow) / dt : 0;
+    this._lastGs = gsNow;
+    this.decelF = (this.decelF || 0) + (decel - (this.decelF || 0)) * Math.min(1, dt * 4);
+    if (c.brake > 0.3 && this.abActive) { c.autobrake = 0; this.abActive = false; this.events.push({ type: 'info', text: '오토브레이크 해제 (페달 브레이크)' }); }
+    const abTarget = [0, 1.7, 3.0, 6.0][c.autobrake] || 0;
+    if (abTarget > 0 && this.wow && this.gsDeployed && gsNow > 3) {
+      this.abActive = true;
+      this.abBrake = clamp((this.abBrake || 0) + (abTarget - this.decelF) * 0.6 * dt, 0, 1);
+    } else if (this.abActive && this.wow && c.lever < 0.1) {
+      this.abBrake = 1;                       // 정지까지 제동 유지 (추력 레버를 올리면 해제)
+    } else {
+      this.abActive = false;
+      this.abBrake = 0;
+    }
     // 엔진
     const idle = this.wow ? AC.n1IdleGround : AC.n1IdleFlight;
     let n1Target;
@@ -164,6 +182,11 @@ export class Aircraft {
       n1Target = this.athrN1;                 // 오토스로틀
     } else {
       n1Target = leverToN1(c.lever, idle);
+      // FLEX(감추력 이륙): 지상에서 FLX 위치로 이륙을 시작하면 상승 후 레버를 줄일 때까지 유지
+      if (Math.abs(c.lever - AC.detents.MCT) < 0.005 && this.flexTemp && (this.wow || this.flexLatched)) {
+        this.flexLatched = true;
+        n1Target = flexN1(this.flexTemp);
+      } else if (c.lever < AC.detents.MCT - 0.01) this.flexLatched = false;
     }
     const tau = this.n1 < 50 ? 2.2 : 1.1;
     let dn = (n1Target - this.n1) / tau;
@@ -305,9 +328,10 @@ export class Aircraft {
       const lat = new Vector3(-dir.z, 0, dir.x);    // 오른쪽
       const vl = vp.dot(dir), vs = vp.dot(lat);
       let mu = 0.015;
-      if (opt.brake) mu += 0.5 * Math.max(c.brake, c.parking ? 1 : 0);
+      const brk = Math.max(c.brake, c.parking ? 1 : 0, this.abBrake || 0);
+      if (opt.brake) mu += 0.5 * brk;
       if (opt.slide) mu = 0.45;
-      const Fl = -mu * Fn * clamp(vl / (opt.brake && (c.brake > 0 || c.parking) ? 0.15 : 0.5), -1, 1);
+      const Fl = -mu * Fn * clamp(vl / (opt.brake && brk > 0 ? 0.15 : 0.5), -1, 1);
       const Fs = -(opt.slide ? 0.45 : 0.75) * Fn * clamp(vs / 0.35, -1, 1);
       const F = new Vector3(0, Fn, 0).addScaledVector(dir, Fl).addScaledVector(lat, Fs);
       Fw.add(F);
@@ -548,8 +572,8 @@ export class Aircraft {
     const CLmax = fp.CL0 + AC.CLa * fp.aStall;
     return Math.sqrt(2 * mass * G / (1.225 * AC.S * CLmax)) / KT;
   }
-  speeds(mass = this.mass) {
-    const vsTO = this.vs1g(1, true, mass);
+  speeds(mass = this.mass, toFlap = this.toFlap || 1) {
+    const vsTO = toFlap === 2 ? this.vs1g(2, false, mass) : this.vs1g(1, true, mass);
     const v2 = 1.13 * vsTO;
     const vlsFull = 1.23 * this.vs1g(4, false, mass);
     return {

@@ -16,6 +16,7 @@ export const ACTIONS = {
   reverse:   { label: '역추력 켜기/끄기 (지상)' },
   pause:     { label: '일시정지' },
   ap:        { label: '오토파일럿(AP1) 켜기/끄기' },
+  autobrake: { label: '오토브레이크 단계 (끔/LO/MED/MAX)' },
   athr:      { label: '오토스로틀(A/THR) 켜기/끄기' },
   appr:      { label: 'APPR (ILS 자동접근) 대기' },
   none:      { label: '(사용 안 함)' },
@@ -83,6 +84,8 @@ export class Input {
     if (code === 'KeyA') return this.emit('action', shift ? 'athr' : 'ap');
     if (code === 'KeyL') return this.emit('action', shift ? 'appr' : 'loc');
     if (code === 'KeyD') return this.emit('action', 'fd');
+    if (code === 'KeyC') return this.emit('action', 'checklist');
+    if (code === 'KeyK') return this.emit('action', 'autobrake');
     if (code === 'KeyU') return this.emit('action', 'guide');
     if (code === 'Comma') return this.emit('action', 'ndDn');
     if (code === 'Period') return this.emit('action', 'ndUp');

@@ -127,3 +127,9 @@ export function thrustFracToN1(f) {
 export function thrustLapse(mach, sigma) {
   return (1 - 0.85 * mach + 0.45 * mach * mach) * Math.pow(sigma, 0.75);
 }
+
+// FLEX(가정 온도) 감추력: 가정 온도가 높을수록 N1 감소 (ISA 15°C 기준, 최대 25% 감추력 수준)
+export function flexN1(temp) {
+  const t = Math.max(15, Math.min(70, temp));
+  return 93.5 - (t - 15) * 0.13;
+}

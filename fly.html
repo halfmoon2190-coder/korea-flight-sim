@@ -14,6 +14,7 @@
   <button data-act="menu" title="메뉴 (Esc)">☰ 메뉴</button>
   <button data-act="view" title="시점 전환 (V)">👁 시점</button>
   <button data-act="pause" title="일시정지 (P)">⏸</button>
+  <button data-act="checklist" title="체크리스트 (C)">📋</button>
   <button data-act="help" title="조작법 (H)">?</button>
   <span id="timeBox" hidden></span>
   <span id="fps"></span>
@@ -59,7 +60,7 @@
   <div class="card">
     <h2>⚠ 비행 중단</h2>
     <p id="crashReason"></p>
-    <div class="row"><button data-act="restart" class="primary">다시 시작</button><button data-act="menu">메뉴</button></div>
+    <div class="row"><button data-act="restart" class="primary">다시 시작</button><button data-act="endFlight">평가서 보기</button><button data-act="menu">메뉴</button></div>
   </div>
 </div>
 
@@ -85,6 +86,7 @@
       <h3>시작 방식</h3>
       <div id="routeStarts" class="scen-list"></div>
       <div id="routeInfo" class="speeds"></div>
+      <div class="row brief-row"><button id="briefBtn">📝 운항 준비 (탑재 · 연료 · 성능)</button><span id="briefSum" class="muted small"></span></div>
     </div>
     <div id="practicePanel">
       <p class="muted small">평지의 연습 공항(인천 33L 규격 활주로 3,750m)에서 기본 조종을 익힙니다.</p>
@@ -106,6 +108,8 @@
       <button id="resumeBtn" hidden>계속 비행</button>
       <button data-act="settings">조종 장치 설정</button>
       <button data-act="help">조작법 · 비행 요령</button>
+      <button data-act="logbook">📒 비행 기록부</button>
+      <button id="endBtn" data-act="endFlight" hidden>운항 종료 · 평가</button>
     </div>
   </div>
 </div>
@@ -160,6 +164,8 @@
           <tr><td>L / Shift+L</td><td>LOC 대기 / APPR(ILS 자동접근) 대기</td></tr>
           <tr><td>D / U</td><td>비행지시기(FD) / 3D 경로 링 켜기·끄기</td></tr>
           <tr><td>, / .</td><td>ND(항법화면) 범위 축소 / 확대</td></tr>
+          <tr><td>K</td><td>오토브레이크 (끔 → LO → MED → MAX)</td></tr>
+          <tr><td>C</td><td>체크리스트 창</td></tr>
           <tr><td>= / -</td><td>시간 가속 ×2 · ×4 · ×8 / 감속 (순항 중)</td></tr>
         </table>
         <h3>조이스틱 (기본 배정)</h3>
@@ -200,6 +206,15 @@
           <li>접근: 목적지 20NM 전후에서 <b>APPR</b> → 활주로 연장선(LOC)과 활공경로(G/S)를 자동으로 잡고 <b>자동착륙</b>까지 합니다. 플랩·기어는 직접!</li>
           <li>스틱을 크게 움직이면 AP가 해제됩니다. 수동 비행 때는 PFD의 초록 FD 막대를 가운데 비행기 표시에 맞추면 경로를 따라갑니다.</li>
         </ol>
+        <h3>운항 절차 (4단계)</h3>
+        <ol class="tips">
+          <li>메뉴 → 대한민국 노선 → <b>📝 운항 준비</b>: 승객·화물을 넣으면 연료·중량·이착륙 성능이 자동 계산됩니다.</li>
+          <li><b>FLEX</b>: 활주로가 충분하면 추력을 줄여 이륙(엔진 수명·연료 절약). 이륙 시 추력 레버를 <b>3(FLX)</b>에 놓으세요.</li>
+          <li><b>C 키</b> 체크리스트: 기체 상태를 보고 자동으로 ✓ 됩니다. 비행 단계에 맞춰 다음 체크리스트로 넘어갑니다.</li>
+          <li><b>K 키</b> 오토브레이크: 이륙 전 MAX, 착륙 전 LO/MED. 착륙 후 자동 제동 → 정지까지.</li>
+          <li><b>안정 접근</b>: 1000ft·500ft에서 기어·플랩 FULL·VAPP·강하율 1000fpm 이하·경로 정렬을 평가합니다. 불안정하면 <b>4(TOGA)로 복행</b>하세요.</li>
+          <li>정지하면 <b>운항 평가서</b>가 나오고 <b>📒 비행 기록부</b>에 저장됩니다 (CSV로 엑셀 저장 가능).</li>
+        </ol>
         <h3>노선 비행 요령</h3>
         <ol class="tips">
           <li>M 키 지도에서 목적지(분홍 선)를 확인하고, 화면 왼쪽 위의 목적지 방위로 선회</li>
@@ -211,6 +226,68 @@
       </div>
     </div>
     <div class="row"><button data-act="closeHelp" class="primary">닫기</button></div>
+  </div>
+</div>
+
+<!-- 체크리스트 -->
+<div id="clPanel" hidden>
+  <div class="cl-head"><button data-cl="prev">◀</button><b id="clTitle"></b><button data-cl="next">▶</button><button data-act="checklist" class="ghost">✕</button></div>
+  <ul id="clItems"></ul>
+  <div id="clFoot" class="muted small"></div>
+</div>
+
+<!-- 운항 준비 -->
+<div id="brief" class="modal" hidden>
+  <div class="card wide">
+    <h2>📝 운항 준비 <span id="bRoute" class="muted small"></span></h2>
+    <div class="brief-grid">
+      <section>
+        <h3>탑재 (Load)</h3>
+        <label class="fld">승객 <input type="number" id="bPax" min="0" max="180" step="1"> 명 <span class="muted small">(1인 84kg 기준, 최대 180)</span></label>
+        <label class="fld">화물 <input type="number" id="bCargo" min="0" max="6000" step="100"> kg</label>
+        <label class="fld">순항 고도 <select id="bFl"></select></label>
+        <label class="fld">교체 공항 <select id="bAltn"></select></label>
+        <label class="fld">추가 연료 <input type="number" id="bExtra" min="0" max="8000" step="100"> kg</label>
+        <h3>연료 계획 (kg)</h3>
+        <table class="bt" id="bFuel"></table>
+      </section>
+      <section>
+        <h3>중량 (kg)</h3>
+        <table class="bt" id="bWeights"></table>
+        <h3>이륙 성능 <span id="bToRwy" class="muted small"></span></h3>
+        <div class="row tight">
+          <label>플랩 <select id="bFlap"><option value="1">1+F</option><option value="2">2</option></select></label>
+          <label>추력 <select id="bThr"><option value="FLEX">FLEX (감추력)</option><option value="TOGA">TOGA (최대)</option></select></label>
+          <label id="bFlexWrap">가정 온도 <select id="bFlex"></select></label>
+        </div>
+        <table class="bt" id="bTo"></table>
+        <h3>착륙 성능 <span id="bLdRwy" class="muted small"></span></h3>
+        <div class="row tight"><label>오토브레이크 <select id="bAb"><option value="1">LO</option><option value="2">MED</option></select></label></div>
+        <table class="bt" id="bLd"></table>
+      </section>
+    </div>
+    <p id="bWarn" class="warn-text"></p>
+    <div class="row"><button id="bApply" class="primary">적용하고 비행 시작</button><button id="bSave">적용 (메뉴로)</button><button data-act="closeBrief" class="ghost">닫기</button></div>
+  </div>
+</div>
+
+<!-- 운항 평가서 -->
+<div id="report" class="modal" hidden>
+  <div class="card wide">
+    <div class="res-head"><span id="rpGrade" class="grade"></span><div><h2 id="rpTitle" style="margin:0"></h2><div id="rpSub" class="muted small"></div></div></div>
+    <div id="rpStats" class="stats"></div>
+    <div id="rpCats" class="rp-cats"></div>
+    <div class="row"><button data-act="logbook">📒 비행 기록부</button><button data-act="restart">같은 비행 다시</button><button data-act="menu" class="primary">메뉴</button><button data-act="closeReport" class="ghost">닫기</button></div>
+  </div>
+</div>
+
+<!-- 비행 기록부 -->
+<div id="logbook" class="modal" hidden>
+  <div class="card wide">
+    <h2>📒 비행 기록부</h2>
+    <div id="lbSum" class="stats"></div>
+    <div class="lb-wrap"><table id="lbTable"></table></div>
+    <div class="row"><button id="lbCsv">CSV로 저장 (엑셀)</button><button id="lbClear" class="ghost">기록 지우기</button><button data-act="closeLogbook" class="primary">닫기</button></div>
   </div>
 </div>
 

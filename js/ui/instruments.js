@@ -447,6 +447,7 @@ export class Instruments {
     // 상태 줄
     const items = [];
     if (ac.ctl.parking) items.push(['PARK BRK', C.amber]);
+    if (ac.ctl.autobrake) items.push([`AUTO BRK ${['', 'LO', 'MED', 'MAX'][ac.ctl.autobrake]}`, ac.abActive ? C.green : C.cyan]);
     if (ac.ctl.brake > 0) items.push(['BRAKE', C.green]);
     if (ac.ctl.sbArmed) items.push(['GND SPLR ARM', C.cyan]);
     if (ac.sbPos > 0.02) items.push([`SPD BRK ${Math.round(ac.sbPos * 100)}%`, ac.ctl.flapLever === 4 ? C.amber : C.green]);
